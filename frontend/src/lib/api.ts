@@ -3221,7 +3221,25 @@ export const api = {
   assistantChannels: () =>
     request<{ channels: AssistantChannel[] }>('/api/custom/assistant/channels').then((result) => result.channels),
   assistantFeishuQr: () =>
-    request<{ authorize_url: string; redirect_uri: string; expires_in_seconds: number }>('/api/custom/assistant/channels/feishu/qr'),
+    request<{
+      session_id: string
+      qr_code_url: string
+      status: 'pending' | 'connected' | 'expired' | 'error'
+      error: string
+      app_id: string
+      expires_in_seconds: number
+      poll_interval_seconds: number
+    }>('/api/custom/assistant/channels/feishu/qr'),
+  assistantFeishuQrStatus: (sessionId: string) =>
+    request<{
+      session_id: string
+      qr_code_url: string
+      status: 'pending' | 'connected' | 'expired' | 'error'
+      error: string
+      app_id: string
+      expires_in_seconds: number
+      poll_interval_seconds: number
+    }>(`/api/custom/assistant/channels/feishu/qr/${encodeURIComponent(sessionId)}`),
   saveAssistantChannel: (platform: string, values: Record<string, string>) =>
     request<AssistantChannel>(`/api/custom/assistant/channels/${encodeURIComponent(platform)}`, {
       method: 'PUT', body: JSON.stringify({ values }),

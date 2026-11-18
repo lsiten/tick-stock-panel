@@ -6,7 +6,7 @@ AI 助手复用同一条本地 Codex/Pi 对话链路，支持飞书、Slack、�
 
 | 平台 | 凭据 | 接收方式 | 回复方式 |
 | --- | --- | --- | --- |
-| 飞书 | App ID / App Secret | 事件订阅回调 | 飞书 `im/v1/messages` |
+| 飞书 | 扫码授权自动创建 Bot；也支持手动填写 App ID / App Secret | 事件订阅回调或长连接 | 飞书 `im/v1/messages` |
 | Slack | Bot Token / App Token / Signing Secret | Socket Mode；也支持 Events API 回调 | `chat.postMessage` |
 | 钉钉 | AppKey / AppSecret | Stream WebSocket；也支持回调入口 | `robot/groupMessages` |
 | 企业微信 | BotID / Secret | 智能机器人 WebSocket 长连接 | `aibot_send_msg` |
@@ -26,3 +26,5 @@ https://<面板域名>/api/custom/assistant/channels/slack/events
 ```
 
 平台消息回调不使用面板浏览器 Cookie，由平台自己的签名/凭据保护。不要把 Bot Token、App Secret 或 Bot Secret 写进仓库、日志或聊天记录。删除渠道会清除本地加密凭据并停止对应轮询/连接任务。
+
+飞书的“生成二维码”走与 Multica 对齐的设备授权流程：后端向 `accounts.feishu.cn/oauth/v1/app/registration` 申请一次性设备码，前端把返回的 `verification_uri_complete` 制成二维码。首次生成二维码不需要 App ID；用飞书 App 扫码并授权后，飞书才返回新建 Bot 的 App ID / App Secret，服务会自动保存并连接。手动填写 App ID / App Secret 仅作为已有自建应用的备用连接方式。

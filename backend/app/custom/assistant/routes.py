@@ -12,19 +12,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-import secrets
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-import httpx
 
 from app.custom.assistant import actions as assistant_actions
 from app.custom.assistant import channels as assistant_channels
 from app.custom.assistant.channel_runtime import AssistantChannelRuntime
+from app.custom.assistant.feishu_registration import feishu_registration
 from app.custom.assistant import sessions as assistant_sessions
 from app.custom.assistant import tools as assistant_tools
 from app.custom.assistant.chat_service import chat_stream
@@ -121,41 +119,19 @@ def build_router() -> APIRouter:
         return {"channels": assistant_channels.list_channels()}
 
     @router.get("/channels/feishu/qr")
-    def feishu_qr(request: Request) -> dict:
-        from app.config import settings
+    async def feishu_qr() -> dict:
+        """向飞书申请一次性设备码，返回可直接用飞书扫码的链接。"""
+        try:
+            return await feishu_registration.begin()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-        app_id = settings.assistant_feishu_app_id.strip()
-        if not app_id:
-            raise HTTPException(status_code=409, detail="尚未配置 ASSISTANT_FEISHU_APP_ID")
-        redirect_uri = settings.assistant_feishu_redirect_uri.strip() or (
-            str(request.base_url).rstrip("/") + "/api/custom/assistant/channels/feishu/oauth/callback"
-        )
-        state = secrets.token_urlsafe(24)
-        query = urlencode({"app_id": app_id, "redirect_uri": redirect_uri, "state": state})
-        return {
-            "app_id": app_id,
-            "state": state,
-            "redirect_uri": redirect_uri,
-            "authorize_url": f"https://open.feishu.cn/open-apis/authen/v1/authorize?{query}",
-            "expires_in_seconds": 600,
-        }
-
-    @router.get("/channels/feishu/oauth/callback")
-    async def feishu_oauth_callback(code: str = "", state: str = "") -> dict:
-        if not code:
-            raise HTTPException(status_code=400, detail="缺少 Feishu OAuth code")
-        values = assistant_channels._required_values("feishu")
-        if not values.get("app_secret"):
-            raise HTTPException(status_code=409, detail="请先保存飞书 App Secret")
-        async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.post(
-                "https://open.feishu.cn/open-apis/authen/v1/access_token",
-                json={"grant_type": "authorization_code", "code": code},
-                headers={"Authorization": f"Bearer {values['app_secret']}"},
-            )
-        if not response.is_success:
-            raise HTTPException(status_code=400, detail="飞书扫码授权失败")
-        return {"ok": True, "state": state, "message": "飞书扫码授权完成，请返回面板继续连接。"}
+    @router.get("/channels/feishu/qr/{session_id}")
+    def feishu_qr_status(session_id: str) -> dict:
+        try:
+            return feishu_registration.status(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="飞书扫码会话不存在或已过期") from exc
 
     class ChannelPayload(BaseModel):
         values: dict[str, str] = Field(default_factory=dict)

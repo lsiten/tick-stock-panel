@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, ChevronRight, MessageCircle, Save, Unplug, X } from 'lucide-react'
 import { api, type AssistantChannel } from '@/lib/api'
@@ -20,7 +20,32 @@ export function SettingsChannelsPanel() {
   const channels = useQuery({ queryKey: ['assistant-channels'], queryFn: api.assistantChannels })
   const [editing, setEditing] = useState<AssistantChannel | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
-  const [feishuQr, setFeishuQr] = useState<string | null>(null)
+  const [feishuQr, setFeishuQr] = useState<Awaited<ReturnType<typeof api.assistantFeishuQr>> | null>(null)
+
+  useEffect(() => {
+    if (!feishuQr || feishuQr.status !== 'pending') return
+    let cancelled = false
+    const interval = window.setInterval(async () => {
+      try {
+        const next = await api.assistantFeishuQrStatus(feishuQr.session_id)
+        if (cancelled) return
+        setFeishuQr(next)
+        if (next.status === 'connected') {
+          toast('飞书 Bot 已连接', 'success')
+          qc.invalidateQueries({ queryKey: ['assistant-channels'] })
+          setValues(prev => ({ ...prev, app_id: next.app_id }))
+        } else if (next.status === 'error' || next.status === 'expired') {
+          toast(next.error || '飞书扫码授权失败', 'error')
+        }
+      } catch {
+        // A temporary network failure should not cancel an active scan.
+      }
+    }, Math.max(2000, feishuQr.poll_interval_seconds * 1000))
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [feishuQr, qc])
   const save = useMutation({
     mutationFn: ({ platform, values }: { platform: string; values: Record<string, string> }) => api.saveAssistantChannel(platform, values),
     onSuccess: async (row) => {
@@ -84,10 +109,10 @@ export function SettingsChannelsPanel() {
       </div>
       {editing.platform === 'feishu' && <div className="mt-4 rounded-lg border border-accent/30 bg-accent/5 p-3">
         <div className="flex items-center justify-between gap-3">
-          <div><p className="text-sm font-medium text-foreground">扫码授权</p><p className="mt-1 text-xs text-secondary">按 Multica 的方式使用飞书官方 OAuth 扫码；需要服务端配置 ASSISTANT_FEISHU_APP_ID。</p></div>
-          <button onClick={async () => { try { const result = await api.assistantFeishuQr(); setFeishuQr(result.authorize_url) } catch {} }} className="shrink-0 rounded-lg border border-accent/40 px-3 py-2 text-xs text-accent hover:bg-accent/10">生成二维码</button>
+          <div><p className="text-sm font-medium text-foreground">飞书 App 扫码授权</p><p className="mt-1 text-xs text-secondary">无需预先填写 App ID。点击后生成一次性二维码，用飞书 App 扫码并授权创建 Bot。</p></div>
+          <button onClick={async () => { try { setFeishuQr(await api.assistantFeishuQr()) } catch (error) { toast(error instanceof Error ? error.message : '飞书二维码申请失败', 'error') } }} className="shrink-0 rounded-lg border border-accent/40 px-3 py-2 text-xs text-accent hover:bg-accent/10">生成二维码</button>
         </div>
-        {feishuQr && <div className="mt-3 flex flex-col items-center gap-2 rounded-lg bg-white p-3"><img className="h-48 w-48" alt="飞书扫码授权二维码" src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(feishuQr)}`} /><a className="max-w-full break-all text-[10px] text-secondary underline" href={feishuQr} target="_blank" rel="noreferrer">无法扫码时打开授权链接</a></div>}
+        {feishuQr && <div className="mt-3 flex flex-col items-center gap-2 rounded-lg bg-white p-3"><img className="h-48 w-48" alt="飞书扫码授权二维码" src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(feishuQr.qr_code_url)}`} /><p className="text-xs text-secondary">{feishuQr.status === 'pending' ? '请用飞书 App 扫码，授权完成后会自动连接。' : feishuQr.status === 'connected' ? '授权完成，Bot 已连接。' : feishuQr.error || '二维码已失效，请重新生成。'}</p><a className="max-w-full break-all text-[10px] text-secondary underline" href={feishuQr.qr_code_url} target="_blank" rel="noreferrer">无法扫码时打开飞书授权链接</a></div>}
       </div>}
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {editing.fields.map(field => <label key={field} className="space-y-1.5 text-xs text-secondary">
