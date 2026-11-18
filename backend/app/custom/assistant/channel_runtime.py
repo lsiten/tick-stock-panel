@@ -29,10 +29,13 @@ class AssistantChannelRuntime:
         self.app_state = app_state
         self._tasks: dict[str, asyncio.Task] = {}
         self._histories: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
+        self._targets: dict[str, set[str]] = defaultdict(set)
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._stopped = False
 
     async def start(self) -> None:
         self._stopped = False
+        self._loop = asyncio.get_running_loop()
         await self.refresh()
 
     async def stop(self) -> None:
@@ -43,6 +46,24 @@ class AssistantChannelRuntime:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def send_notification(self, platform: str, text: str) -> None:
+        """把持久监控通知发到最近使用该渠道的会话。"""
+        targets = list(self._targets.get(platform, set()))
+        if platform == "feishu":
+            for chat_id in targets:
+                try:
+                    await self.feishu_send(chat_id, text)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Feishu monitor notification failed chat_id=%s: %s", chat_id, exc)
+
+    def send_notification_sync(self, platform: str, text: str) -> None:
+        """供行情线程提交异步消息，不阻塞监控评估。"""
+        if self._loop is not None and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(self.send_notification(platform, text), self._loop)
+
+    def has_targets(self, platform: str) -> bool:
+        return bool(self._targets.get(platform))
 
     async def refresh(self) -> None:
         await self.stop()
@@ -190,6 +211,7 @@ class AssistantChannelRuntime:
                         if event is None:
                             continue
                         logger.info("Feishu assistant received a message chat_id=%s", event["chat_id"])
+                        self._targets["feishu"].add(event["chat_id"])
                         asyncio.create_task(
                             self._handle_feishu_message(event),
                             name="assistant-feishu-message",

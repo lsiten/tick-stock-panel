@@ -44,7 +44,7 @@ create_strategy(name, description, code) 保存。不要跳过第一步凭印象
 META.timeframes=["1m"]，当前仅支持 A 股。遇到分钟涨幅、分钟均量、分钟滚动窗口等需求，\
 先通过 create_strategy(show_guide=true) 读取分钟规范，再编写代码保存；不要将分钟条件替换成日线条件。\
 run_strategy 默认按策略声明选择资产与周期，可显式指定 asset_type/timeframe/params。\
-单次运行、回测与持续监控分别说明，持续分钟策略提醒尚未接通，不得声称已开启自动监听。
+单次运行、回测与持续监控分别说明。用户要求持续行情提醒时，使用 create_monitor_rule 创建持久规则，先确认标的、字段、阈值和通知渠道，不能把一次性 run_strategy 说成持续监听。
 - 盘中声明式信号用 create_signal_strategy(timeframe="intraday")，字段必须来自盘中特征白名单；\
 需要任意窗口公式时使用分钟 Python 策略。数据权限判断查看 list_data_capabilities 返回的 usable 与 source，\
 注册表存在该能力不代表当前数据源可用。
@@ -53,7 +53,8 @@ run_strategy 默认按策略声明选择资产与周期，可显式指定 asset_
 sync_data(pipeline 补行情 / financials 补财务 / minute_extend 补分钟历史, 动作须确认), \
 触发后用 get_sync_status 查进度(隔几秒再查, 不要高频轮询; 任务单飞, 重复触发只会复用)。
 - 「信号」与「策略」是两个不同的产物, 不要混用工具:
-  · 用户要「信号 / 条件 / 筛选条件 / 提醒条件」→ create_signal_strategy (写声明式信号库条目);
+  · 用户要一次性「信号 / 条件 / 筛选条件」→ create_signal_strategy (写声明式信号库条目);
+  · 用户要持续「提醒 / 监控 / 到价通知」→ create_monitor_rule (写持久监控规则并绑定通知渠道);
   · 用户要「策略 / 选股策略 / 帮我建个策略 / 做个策略」→ create_strategy (写完整 Python 策略)。
   用户说「策略」时**不要**退化成 create_signal_strategy —— 那只会写一个信号, 不是策略, \
 用户还得自己去策略页拼装。拿不准时按「策略」理解, 并在正文里说明你创建的是策略草稿。

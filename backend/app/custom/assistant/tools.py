@@ -3,7 +3,7 @@
 设计原则(为项目服务、有界):
 - 查询工具对应页面核心查询能力(行情/自选/看板/指数/板块轮动/市场
   环境/异动/持仓提醒/信号库/财务/个股分析/因子值/跑策略), 全部只读。
-- 动作工具(create_signal_strategy/add_to_watchlist, 及核心目录的
+- 动作工具(create_signal_strategy/create_monitor_rule/add_to_watchlist, 及核心目录的
   run_backtest)有写副作用或重计算, 由 chat_service 的确认闸门把守
   (actions.py), 未经用户确认不会执行。
 - 返回体有界: rows 全部带 limit 钳制, 大表(enriched/财务)先 filter 再取
@@ -813,6 +813,7 @@ _SIGNAL_FIELD_HINT = (
 # 统一后只需认 action_ok (原字段保留, 不破坏既有消费方)。
 ACTION_RESULT_TOOLS: frozenset[str] = frozenset({
     "create_signal_strategy",
+    "create_monitor_rule",
     "create_strategy",
     "add_to_watchlist",
     "sync_data",
@@ -820,6 +821,86 @@ ACTION_RESULT_TOOLS: frozenset[str] = frozenset({
 
 # 策略源码上限: 正常策略 200~400 行, 60KB 足够; 防止模型一次灌入超大文本
 _MAX_STRATEGY_CODE_CHARS = 60_000
+
+
+def _create_monitor_rule(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+    """创建持久监控规则，并立即同步当前监控引擎。"""
+    from app.services import preferences
+    from app.strategy import monitor_rules
+
+    if ctx.data_dir is None:
+        raise ValueError("数据目录未就绪。")
+    name = str(args.get("name") or "").strip()
+    if not name:
+        raise ValueError("name 不能为空。")
+    rule_type = str(args.get("type") or "price")
+    symbols = list(dict.fromkeys(_validate_symbol(symbol) for symbol in (args.get("symbols") or [])))
+    if not symbols:
+        raise ValueError("symbols 不能为空, 请传入要监控的证券代码。")
+    raw_conditions = args.get("conditions") or []
+    if not isinstance(raw_conditions, list):
+        raise ValueError("conditions 必须是数组。")
+    conditions: list[dict[str, Any]] = []
+    for index, condition in enumerate(raw_conditions[:8]):
+        if not isinstance(condition, dict):
+            raise ValueError(f"第 {index + 1} 个条件格式错误。")
+        field = str(condition.get("field") or "").strip()
+        op = str(condition.get("op") or "").strip()
+        value = condition.get("value")
+        if not field or not op:
+            raise ValueError(f"第 {index + 1} 个条件缺少 field 或 op。")
+        item: dict[str, Any] = {"field": field, "op": op}
+        if op != "truth":
+            number = _finite_float(value)
+            if number is None:
+                raise ValueError(f"第 {index + 1} 个条件的 value 必须是数字。")
+            item["value"] = number
+        conditions.append(item)
+    if rule_type != "date" and not conditions:
+        raise ValueError("持续行情提醒至少需要一个 conditions 条件。")
+
+    channels = args.get("webhook_channels")
+    if channels is None:
+        channels = ["feishu"] if preferences.load().get("assistant_message_channel_status", {}).get("feishu") == "connected" else []
+    if not isinstance(channels, list):
+        raise ValueError("webhook_channels 必须是数组。")
+    channels = [str(channel) for channel in channels if str(channel) in {"feishu", "wecom", "custom", "email"}]
+
+    asset_types = set()
+    if ctx.repo is not None:
+        for symbol in symbols:
+            try:
+                asset_types.add(ctx.repo.resolve_asset_type(symbol))
+            except Exception:
+                asset_types.add("stock")
+    asset_type = next(iter(asset_types)) if len(asset_types) == 1 else "stock"
+    rule = monitor_rules.normalize({
+        "id": f"mr_ai_{uuid.uuid4().hex[:10]}",
+        "name": name,
+        "enabled": True,
+        "type": rule_type,
+        "asset_type": asset_type,
+        "scope": "symbols",
+        "symbols": symbols,
+        "conditions": conditions,
+        "logic": str(args.get("logic") or "and"),
+        "cooldown_seconds": int(args.get("cooldown_seconds") or 3600),
+        "severity": str(args.get("severity") or "warn"),
+        "message": str(args.get("message") or name),
+        "webhook_channels": channels,
+        "remind_date": args.get("remind_date"),
+        "lead_days": int(args.get("lead_days") or 0),
+    })
+    monitor_rules.validate(rule)
+    monitor_rules.save_one(ctx.data_dir, rule)
+    if ctx.engine is not None:
+        ctx.engine.set_rules(monitor_rules.load_all(ctx.data_dir))
+    return {
+        "created": True,
+        "rule": rule,
+        "notification_channels": channels,
+        "note": "持久监控规则已保存并同步到监控引擎。触发后会按 notification_channels 投递。",
+    }
 
 
 def _create_signal_strategy(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
@@ -1374,6 +1455,7 @@ _LOCAL_TOOLS: dict[str, Callable[[dict[str, Any], ToolContext], Any]] = {
     "run_strategy": _run_strategy,
     "get_factor_values": _get_factor_values,
     "create_signal_strategy": _create_signal_strategy,
+    "create_monitor_rule": _create_monitor_rule,
     "create_strategy": _create_strategy,
     "add_to_watchlist": _add_to_watchlist,
     "check_data_coverage": _check_data_coverage,
@@ -1556,6 +1638,39 @@ def _local_tool_schemas() -> list[dict[str, Any]]:
                 },
             },
             ["name", "kind", "conditions"],
+        ),
+        _schema(
+            "create_monitor_rule",
+            "创建持久监控提醒 (动作工具, 须用户确认)。规则会写入监控规则并持续评估，支持 price/signal/date 类型。"
+            "webhook_channels 可填 feishu、wecom、custom、email。用户从飞书发起且已连接飞书时默认使用 feishu。"
+            "用户没有给出明确阈值时先追问条件，不要自行猜测。",
+            {
+                "name": {"type": "string", "description": "提醒名称"},
+                "type": {"type": "string", "enum": ["price", "signal", "date"], "description": "规则类型, 默认 price"},
+                "symbols": {"type": "array", "items": {"type": "string"}, "description": "证券代码数组"},
+                "conditions": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "description": "行情条件, 如 [{field:'change_pct',op:'<=',value:-5}]",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "field": {"type": "string", "description": "监控字段, 如 close/change_pct/ma20/rsi_14"},
+                            "op": {"type": "string", "enum": [">", ">=", "<", "<=", "==", "!=", "truth"]},
+                            "value": {"type": "number"},
+                        },
+                        "required": ["field", "op"],
+                    },
+                },
+                "logic": {"type": "string", "enum": ["and", "or"], "description": "条件组合方式"},
+                "cooldown_seconds": {"type": "integer", "description": "同一规则重复提醒间隔, 默认 3600 秒"},
+                "severity": {"type": "string", "enum": ["info", "warn", "critical"]},
+                "message": {"type": "string", "description": "触发时的提醒正文"},
+                "webhook_channels": {"type": "array", "items": {"type": "string", "enum": ["feishu", "wecom", "custom", "email"]}},
+                "remind_date": {"type": "string", "description": "type=date 时的 YYYY-MM-DD 日期"},
+                "lead_days": {"type": "integer", "description": "日期提醒提前天数"},
+            },
+            ["name", "symbols"],
         ),
         _schema(
             "create_strategy",
@@ -1759,6 +1874,10 @@ def summarize_tool_result(name: str, payload: dict[str, Any]) -> str:
     if name == "create_signal_strategy":
         signal = result.get("signal") or {}
         return f"创建信号 {signal.get('name', '-')} ({signal.get('id', '-')})"
+    if name == "create_monitor_rule":
+        rule = result.get("rule") or {}
+        channels = result.get("notification_channels") or []
+        return f"已创建持续监控 {rule.get('name', '-')}，通知渠道 {','.join(channels) or '应用内'}"
     if name == "add_to_watchlist":
         return result.get("note") or "已加入自选"
     if name == "check_data_coverage":

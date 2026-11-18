@@ -2,6 +2,7 @@
 
 动作工具(chat_service.execute 检测 ACTION_TOOLS 时挂闸门):
 - create_signal_strategy: 写 user_data/custom_signals/*.json 并失效多层缓存
+- create_monitor_rule: 写入持久监控规则并同步监控引擎
 - run_backtest:           spawn 回测子进程(重计算, 占共享限流槽)
 - add_to_watchlist:       修改用户自选列表
 - sync_data:              触发数据补全后台任务(盘后管道/财务/分钟K扩展)
@@ -22,6 +23,7 @@ from typing import Any
 # 须确认才能执行的工具名(工具实现在 tools.py / tool_catalog)。
 ACTION_TOOLS: frozenset[str] = frozenset({
     "create_signal_strategy",
+    "create_monitor_rule",
     "create_strategy",
     "run_backtest",
     "add_to_watchlist",
@@ -33,6 +35,10 @@ ACTION_META: dict[str, dict[str, str]] = {
     "create_signal_strategy": {
         "label": "创建自定义信号",
         "risk": "将在信号库写入一个新的信号定义并清空策略/指标缓存",
+    },
+    "create_monitor_rule": {
+        "label": "创建持久监控提醒",
+        "risk": "将在监控规则中写入条件，并按已选择的渠道发送触发通知",
     },
     "create_strategy": {
         "label": "创建 AI 策略草稿",

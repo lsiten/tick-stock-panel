@@ -1930,7 +1930,13 @@ class QuoteService:
             custom_secret = secrets_store.get_custom_webhook_secret()
             email_config = preferences.get_email_smtp_config()
             email_password = secrets_store.get_email_smtp_password()
-            if not any((feishu_url, wecom_url, custom_url, email_adapter.is_configured(email_config))):
+            assistant_runtime = getattr(self._app_state, "assistant_channel_runtime", None)
+            assistant_feishu_ready = bool(
+                assistant_runtime
+                and callable(getattr(assistant_runtime, "has_targets", None))
+                and assistant_runtime.has_targets("feishu")
+            )
+            if not any((feishu_url, assistant_feishu_ready, wecom_url, custom_url, email_adapter.is_configured(email_config))):
                 return
 
             # 反查规则, 过滤出启用推送的事件
@@ -1958,6 +1964,9 @@ class QuoteService:
                 # 失败由 webhook_adapter 记 WARNING(可见)。
                 if feishu_url and "feishu" in channels:
                     _WEBHOOK_EXECUTOR.submit(webhook_adapter.send_feishu, feishu_url, title, body, feishu_secret)
+                    enqueued += 1
+                elif assistant_feishu_ready and "feishu" in channels:
+                    assistant_runtime.send_notification_sync("feishu", f"{title}\n{body}")
                     enqueued += 1
                 if wecom_url and "wecom" in channels:
                     _WEBHOOK_EXECUTOR.submit(webhook_adapter.send_wecom, wecom_url, title, body)
