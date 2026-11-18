@@ -28,7 +28,9 @@ CODEX_CLI_PROVIDER = "codex_cli"
 PI_CLI_PROVIDER = "pi_cli"
 CODEX_DEFAULT_COMMAND = "codex"
 PI_DEFAULT_COMMAND = "pi"
-CODEX_MIN_TIMEOUT_SECONDS = 600.0
+# Keep non-browser channel messages bounded. A hung local CLI must not leave a
+# Telegram, Slack, Feishu, DingTalk, or WeCom conversation waiting indefinitely.
+CODEX_MIN_TIMEOUT_SECONDS = 120.0
 CODEX_SUPPORTED_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 OPENAI_DEFAULT_REASONING_EFFORT = "high"
 # OpenAI 系两种请求协议: chat.completions (兼容面最广) 与 Responses (官方新协议)。

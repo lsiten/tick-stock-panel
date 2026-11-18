@@ -290,7 +290,7 @@ async def chat_stream(
                 round_text: list[str] = []
                 tool_calls: list[dict[str, Any]] = []
                 reasoning_content: str | None = None
-                async for event in stream_round(req_messages, schemas, temperature=0.3, timeout=240.0):
+                async for event in stream_round(req_messages, schemas, temperature=0.3, timeout=120.0):
                     if event["type"] == "text":
                         round_text.append(event["delta"])
                         await queue.put({"type": "delta", "content": event["delta"]})

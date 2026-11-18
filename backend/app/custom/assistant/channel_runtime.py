@@ -87,25 +87,29 @@ class AssistantChannelRuntime:
         engine = getattr(self.app_state, "strategy_engine", None)
         repo = getattr(self.app_state, "repo", None)
         output: list[str] = []
-        async for line in chat_stream(
-            history=history,
-            context={"page": f"message:{platform}", "symbol": ""},
-            engine=engine,
-            data_dir=str(repo.store.data_dir) if repo is not None else None,
-            repo=repo,
-            quote_service=getattr(self.app_state, "quote_service", None),
-            depth_service=getattr(self.app_state, "depth_service", None),
-            capabilities=getattr(self.app_state, "capabilities", None),
-            financial_scheduler=getattr(self.app_state, "financial_scheduler", None),
-        ):
-            try:
-                event = json.loads(line)
-            except (json.JSONDecodeError, TypeError):
-                continue
-            if event.get("type") == "delta":
-                output.append(str(event.get("content") or ""))
-            elif event.get("type") == "error":
-                output.append(str(event.get("message") or "AI 助手处理失败"))
+        try:
+            async for line in chat_stream(
+                history=history,
+                context={"page": f"message:{platform}", "symbol": ""},
+                engine=engine,
+                data_dir=str(repo.store.data_dir) if repo is not None else None,
+                repo=repo,
+                quote_service=getattr(self.app_state, "quote_service", None),
+                depth_service=getattr(self.app_state, "depth_service", None),
+                capabilities=getattr(self.app_state, "capabilities", None),
+                financial_scheduler=getattr(self.app_state, "financial_scheduler", None),
+            ):
+                try:
+                    event = json.loads(line)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if event.get("type") == "delta":
+                    output.append(str(event.get("content") or ""))
+                elif event.get("type") == "error":
+                    output.append(str(event.get("message") or "AI 助手处理失败"))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("%s assistant AI generation failed: %s", platform, exc)
+            output.append(f"AI 助手处理失败: {exc}")
         answer = "".join(output).strip() or "AI 助手没有生成可发送的回复。"
         history.append({"role": "assistant", "content": answer})
         history[:] = history[-16:]
