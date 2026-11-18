@@ -12,6 +12,7 @@ import json
 import logging
 from collections import defaultdict
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import websockets
@@ -50,6 +51,8 @@ class AssistantChannelRuntime:
         statuses = preferences.load().get("assistant_message_channel_status", {})
         if _required_values("telegram") and statuses.get("telegram") == "connected":
             self._tasks["telegram"] = asyncio.create_task(self._telegram_loop(), name="assistant-telegram")
+        if _required_values("feishu") and statuses.get("feishu") == "connected":
+            self._tasks["feishu"] = asyncio.create_task(self._feishu_loop(), name="assistant-feishu")
         if _required_values("slack") and statuses.get("slack") == "connected":
             self._tasks["slack"] = asyncio.create_task(self._slack_loop(), name="assistant-slack")
         if _required_values("dingtalk") and statuses.get("dingtalk") == "connected":
@@ -145,6 +148,86 @@ class AssistantChannelRuntime:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Telegram assistant loop failed: %s", exc)
                 await asyncio.sleep(5)
+
+    async def _feishu_loop(self) -> None:
+        """飞书 PersonalAgent 长连接，接收事件并确认二进制数据帧。"""
+        while not self._stopped:
+            values = _required_values("feishu")
+            app_id, app_secret = values.get("app_id", ""), values.get("app_secret", "")
+            if not app_id or not app_secret:
+                return
+            try:
+                endpoint = await self._feishu_endpoint(app_id, app_secret)
+                ping_interval = max(10, int(endpoint["ping_interval"]))
+                async with websockets.connect(endpoint["url"], ping_interval=20, close_timeout=5) as ws:
+                    logger.info("Feishu assistant long connection established")
+                    while not self._stopped:
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), timeout=ping_interval)
+                        except asyncio.TimeoutError:
+                            await ws.send(_encode_frame(service=endpoint["service_id"], frame_type="ping"))
+                            continue
+                        if isinstance(raw, str):
+                            logger.warning("Feishu assistant dropped text websocket frame")
+                            continue
+                        frame = _decode_frame(raw)
+                        if frame is None:
+                            logger.warning("Feishu assistant dropped malformed websocket frame")
+                            continue
+                        frame_type = frame["headers"].get("type", "")
+                        if frame["method"] == 0:
+                            if frame_type == "ping":
+                                await ws.send(_encode_frame(service=endpoint["service_id"], frame_type="pong"))
+                            continue
+                        if frame["method"] != 1:
+                            continue
+                        await ws.send(_encode_ack(frame, ok=True))
+                        event = _decode_feishu_message(frame["payload"])
+                        if event is None:
+                            continue
+                        logger.info("Feishu assistant received a message chat_id=%s", event["chat_id"])
+                        asyncio.create_task(
+                            self._handle_feishu_message(event),
+                            name="assistant-feishu-message",
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Feishu assistant long connection failed: %s", exc)
+                await asyncio.sleep(5)
+
+    async def _handle_feishu_message(self, event: dict[str, str]) -> None:
+        try:
+            await self.handle_inbound(
+                "feishu",
+                event["chat_id"],
+                event["text"],
+                sender=event["sender_id"],
+                reply=lambda answer, cid=event["chat_id"]: self.feishu_send(cid, answer),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Feishu assistant failed to reply chat_id=%s: %s", event["chat_id"], exc)
+
+    async def _feishu_endpoint(self, app_id: str, app_secret: str) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                "https://open.feishu.cn/callback/ws/endpoint",
+                json={"AppID": app_id, "AppSecret": app_secret},
+            )
+            response.raise_for_status()
+            data = response.json()
+        endpoint = data.get("data") or {}
+        if data.get("code") != 0 or not endpoint.get("URL"):
+            raise RuntimeError(str(data.get("msg") or "飞书长连接地址获取失败"))
+        config = endpoint.get("ClientConfig") or {}
+        service_id = int(parse_qs(urlparse(endpoint["URL"]).query).get("service_id", ["0"])[0])
+        if not service_id:
+            raise RuntimeError("飞书长连接响应缺少 service_id")
+        return {
+            "url": endpoint["URL"],
+            "service_id": service_id,
+            "ping_interval": int(config.get("PingInterval") or 90),
+        }
 
     async def _telegram_send(self, token: str, chat_id: int | str, text: str, reply_to: int | None = None) -> None:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -259,14 +342,20 @@ class AssistantChannelRuntime:
                 "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
                 json={"app_id": values["app_id"], "app_secret": values["app_secret"]},
             )
-            token = token_resp.json().get("tenant_access_token")
+            token_resp.raise_for_status()
+            token_data = token_resp.json()
+            token = token_data.get("tenant_access_token")
             if not token:
-                raise RuntimeError("飞书 tenant_access_token 获取失败")
-            await client.post(
+                raise RuntimeError(str(token_data.get("msg") or "飞书 tenant_access_token 获取失败"))
+            response = await client.post(
                 "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
                 headers={"Authorization": f"Bearer {token}"},
                 json={"receive_id": chat_id, "msg_type": "text", "content": json.dumps({"text": text[:30000]}, ensure_ascii=False)},
             )
+            response.raise_for_status()
+            result = response.json()
+            if result.get("code", 0) != 0:
+                raise RuntimeError(str(result.get("msg") or "飞书消息发送失败"))
 
     async def dingtalk_send(self, conversation_id: str, text: str) -> None:
         values = _required_values("dingtalk")
@@ -288,3 +377,155 @@ class AssistantChannelRuntime:
                     "msgParam": json.dumps({"content": text[:20000]}, ensure_ascii=False),
                 },
             )
+
+
+def _encode_varint(value: int) -> bytes:
+    value = max(0, int(value))
+    result = bytearray()
+    while value >= 0x80:
+        result.append((value & 0x7F) | 0x80)
+        value >>= 7
+    result.append(value)
+    return bytes(result)
+
+
+def _encode_bytes(field_number: int, value: bytes) -> bytes:
+    tag = _encode_varint(field_number << 3 | 2)
+    return tag + _encode_varint(len(value)) + value
+
+
+def _encode_varint_field(field_number: int, value: int) -> bytes:
+    return _encode_varint(field_number << 3) + _encode_varint(value)
+
+
+def _encode_frame(
+    *,
+    service: int,
+    method: int = 0,
+    frame_type: str = "",
+    headers: list[tuple[str, str]] | None = None,
+    payload: bytes | None = None,
+) -> bytes:
+    all_headers = list(headers or [])
+    if frame_type:
+        all_headers.insert(0, ("type", frame_type))
+    frame = bytearray()
+    frame.extend(_encode_varint_field(1, 0))
+    frame.extend(_encode_varint_field(2, 0))
+    frame.extend(_encode_varint_field(3, service))
+    frame.extend(_encode_varint_field(4, method))
+    for key, value in all_headers:
+        header = _encode_bytes(1, key.encode()) + _encode_bytes(2, value.encode())
+        frame.extend(_encode_bytes(5, header))
+    frame.extend(_encode_bytes(6, b""))
+    frame.extend(_encode_bytes(7, b""))
+    if payload is not None:
+        frame.extend(_encode_bytes(8, payload))
+    frame.extend(_encode_bytes(9, b""))
+    return bytes(frame)
+
+
+def _encode_ack(frame: dict[str, Any], *, ok: bool) -> bytes:
+    payload = json.dumps(
+        {"code": 200 if ok else 500, "headers": None, "data": None},
+        separators=(",", ":"),
+    ).encode()
+    return _encode_frame(
+        service=frame["service"],
+        method=frame["method"],
+        headers=frame["header_items"],
+        payload=payload,
+    )
+
+
+def _read_varint(raw: bytes, offset: int) -> tuple[int, int]:
+    value = 0
+    shift = 0
+    while offset < len(raw):
+        byte = raw[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return value, offset
+        shift += 7
+        if shift > 63:
+            raise ValueError("protobuf varint too long")
+    raise ValueError("truncated protobuf varint")
+
+
+def _read_bytes(raw: bytes, offset: int) -> tuple[bytes, int]:
+    length, offset = _read_varint(raw, offset)
+    end = offset + length
+    if end > len(raw):
+        raise ValueError("truncated protobuf bytes")
+    return raw[offset:end], end
+
+
+def _decode_header(raw: bytes) -> tuple[str, str]:
+    key = value = ""
+    offset = 0
+    while offset < len(raw):
+        tag, offset = _read_varint(raw, offset)
+        field_number, wire_type = tag >> 3, tag & 7
+        if wire_type != 2:
+            raise ValueError("invalid Feishu frame header")
+        data, offset = _read_bytes(raw, offset)
+        if field_number == 1:
+            key = data.decode(errors="replace")
+        elif field_number == 2:
+            value = data.decode(errors="replace")
+    return key, value
+
+
+def _decode_frame(raw: bytes) -> dict[str, Any] | None:
+    try:
+        frame: dict[str, Any] = {"method": 0, "service": 0, "headers": {}, "header_items": [], "payload": b""}
+        offset = 0
+        while offset < len(raw):
+            tag, offset = _read_varint(raw, offset)
+            field_number, wire_type = tag >> 3, tag & 7
+            if wire_type == 0:
+                value, offset = _read_varint(raw, offset)
+                if field_number == 3:
+                    frame["service"] = value
+                elif field_number == 4:
+                    frame["method"] = value
+            elif wire_type == 2:
+                value, offset = _read_bytes(raw, offset)
+                if field_number == 5:
+                    key, header_value = _decode_header(value)
+                    frame["header_items"].append((key, header_value))
+                    frame["headers"][key] = header_value
+                elif field_number == 8:
+                    frame["payload"] = value
+            else:
+                raise ValueError("unsupported Feishu frame wire type")
+        return frame
+    except (UnicodeDecodeError, ValueError):
+        return None
+
+
+def _decode_feishu_message(payload: bytes) -> dict[str, str] | None:
+    try:
+        envelope = json.loads(payload)
+        if envelope.get("header", {}).get("event_type") != "im.message.receive_v1":
+            return None
+        event = envelope.get("event") or {}
+        if (event.get("sender") or {}).get("sender_type") == "bot":
+            return None
+        message = event.get("message") or {}
+        chat_id = str(message.get("chat_id") or "")
+        message_type = str(message.get("message_type") or "text")
+        content = message.get("content") or ""
+        if isinstance(content, str):
+            try:
+                content = json.loads(content)
+            except json.JSONDecodeError:
+                content = {"text": content}
+        text = str((content or {}).get("text") or "").strip()
+        sender_id = str(((event.get("sender") or {}).get("sender_id") or {}).get("open_id") or "")
+        if not chat_id or not text or message_type not in {"text", "post"}:
+            return None
+        return {"chat_id": chat_id, "text": text, "sender_id": sender_id}
+    except (TypeError, json.JSONDecodeError):
+        return None
