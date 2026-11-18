@@ -22,14 +22,16 @@ from typing import Any
 from app.custom.assistant import actions as assistant_actions
 from app.custom.assistant import tools as assistant_tools
 from app.custom.assistant.codex import stream_codex_round
+from app.custom.assistant.pi import stream_pi_round
 from app.custom.assistant.prompt import build_system_prompt
-from app.custom.assistant.streaming import stream_openai_round
+from app.custom.assistant.streaming import stream_openai_round  # noqa: F401 — legacy test seam
 from app.services.ai_provider import (
     ai_configured,
     current_ai_context_window,
     current_ai_max_output_tokens,
     current_reasoning_context_key,
     is_codex_cli_provider,
+    is_local_cli_provider,
 )
 
 # 单轮最多保留的用户/助手消息条数(约 8 轮对话), 更早历史截断以控 token。
@@ -163,16 +165,27 @@ async def chat_stream(
     financial_scheduler: Any = None,
 ) -> AsyncIterator[str]:
     """执行一轮对话, 逐行 yield NDJSON 事件(见模块 __init__ 的协议注释)。"""
-    if not ai_configured():
+    # is_codex_cli_provider is kept in the condition so existing integrations
+    # that inject a Codex adapter remain local without changing provider state.
+    if not (is_codex_cli_provider() or is_local_cli_provider()):
         yield _line(_error_event(
-            "no_key",
-            "AI 未配置: 请先在设置页配置 AI 供应商和 API Key。",
+            "provider",
+            "AI 助手仅使用本地 AI CLI（Codex 或 Pi）。请在设置页选择本机 CLI。",
             _SETTINGS_HINT,
         ))
         yield _line({"type": "done"})
         return
 
-    stream_round = stream_codex_round if is_codex_cli_provider() else stream_openai_round
+    if not ai_configured():
+        yield _line(_error_event(
+            "no_key",
+            "本地 AI CLI 未就绪: 请先安装并登录 Codex 或 Pi，再到设置页测试连接。",
+            _SETTINGS_HINT,
+        ))
+        yield _line({"type": "done"})
+        return
+
+    stream_round = stream_codex_round if is_codex_cli_provider() else stream_pi_round
     reasoning_context = current_reasoning_context_key()
     truncated, was_truncated = _truncate_history(history, reasoning_context=reasoning_context)
     if not truncated:

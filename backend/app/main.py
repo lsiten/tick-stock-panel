@@ -315,6 +315,18 @@ async def _application_lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("wecom_bot_service init failed: %s", e)
 
+    # AI assistant message-channel runtime (Telegram/Slack polling or Socket
+    # Mode, plus callback endpoints for Feishu/DingTalk).  Credentials are
+    # optional; the runtime quietly stays idle until a channel is configured.
+    try:
+        from app.custom.assistant.channel_runtime import AssistantChannelRuntime
+
+        channel_runtime = AssistantChannelRuntime(app.state)
+        app.state.assistant_channel_runtime = channel_runtime
+        await channel_runtime.start()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("assistant channel runtime init failed: %s", e)
+
     # 内置扩展表 (概念/行业): 先创建 config (含拉取配置), 默认开启定时拉取。
     # 必须在 pull_scheduler.refresh() 之前执行, 否则全新部署时 scheduler 读不到
     # 刚创建的预设, 定时任务不会启动。
@@ -525,6 +537,9 @@ async def _application_lifespan(app: FastAPI):
         wbot = getattr(app.state, "wecom_bot_service", None)
         if wbot:
             wbot.stop()
+        channel_runtime = getattr(app.state, "assistant_channel_runtime", None)
+        if channel_runtime:
+            await channel_runtime.stop()
         mrs = getattr(app.state, "minute_refresh", None)
         if mrs:
             mrs.stop()
@@ -595,7 +610,14 @@ app.add_middleware(
 #   2. 未设密码 + 公网       → 拒绝(403, 防裸奔也防抢占; 引导本机设密码)
 #   3. 已设密码              → 检查 session, 无效则 401(前端跳登录)
 # 白名单: /api/auth/* (设密码/登录本身)、/health 等探活。
-_AUTH_WHITELIST_PREFIX = ("/api/auth/",)
+_AUTH_WHITELIST_PREFIX = (
+    "/api/auth/",
+    # Platform callbacks authenticate with their own signed payload/token;
+    # they cannot carry the panel's browser session cookie.
+    "/api/custom/assistant/channels/feishu/events",
+    "/api/custom/assistant/channels/slack/events",
+    "/api/custom/assistant/channels/dingtalk/events",
+)
 _AUTH_WHITELIST_EXACT = (
     "/health",
     "/api/health",

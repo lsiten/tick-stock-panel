@@ -122,8 +122,8 @@ async def test_chat_service_sends_reasoning_content_back(monkeypatch: pytest.Mon
         return {"ok": True, "result": {}}
 
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: False)
-    monkeypatch.setattr(chat_service, "stream_openai_round", fake_round)
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
+    monkeypatch.setattr(chat_service, "stream_codex_round", fake_round)
     monkeypatch.setattr(assistant_tools, "execute_assistant_tool", fake_execute)
 
     lines = [line async for line in chat_service.chat_stream(
@@ -224,10 +224,14 @@ def test_http_conversation_restores_reasoning_after_session_reload(monkeypatch, 
         return {"ok": True, "result": {}}
 
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda: False)
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda: True)
     monkeypatch.setattr(streaming, "is_responses_protocol", lambda: False)
     monkeypatch.setattr(streaming, "_client", lambda timeout: Client())
     monkeypatch.setattr(streaming, "_build_kwargs", lambda temperature: {})
+    async def local_round(messages, tools, *, temperature=0.3, timeout=240.0):
+        async for event in streaming.stream_openai_round(messages, tools, temperature=temperature, timeout=timeout):
+            yield event
+    monkeypatch.setattr(chat_service, "stream_codex_round", local_round)
     monkeypatch.setattr(assistant_tools, "execute_assistant_tool", execute)
     app = FastAPI()
     app.include_router(build_router())
@@ -304,11 +308,11 @@ async def test_input_budget_is_checked_after_tool_reasoning_grows(monkeypatch):
         return {"ok": True, "result": {}}
 
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda: False)
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda: True)
     monkeypatch.setattr(chat_service, "build_system_prompt", lambda *args, **kwargs: "s")
     monkeypatch.setattr(chat_service, "current_ai_context_window", lambda: 100)
     monkeypatch.setattr(chat_service, "current_ai_max_output_tokens", lambda: 10)
-    monkeypatch.setattr(chat_service, "stream_openai_round", round_)
+    monkeypatch.setattr(chat_service, "stream_codex_round", round_)
     monkeypatch.setattr(assistant_tools, "execute_assistant_tool", execute)
     events = [json.loads(line) async for line in chat_service.chat_stream(history=[{"role": "user", "content": "hi"}])]
     assert len(calls) == 1

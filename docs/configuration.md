@@ -56,7 +56,7 @@ TickFlow 是内置默认数据源;同时支持插件化接入第三方数据源(
 用于自然语言生成策略。**所有配置留空即跳过**,不影响核心功能。支持任意 OpenAI 兼容接口。
 
 ```ini
-AI_PROVIDER=openai_compat              # openai_compat | ollama
+AI_PROVIDER=openai_compat              # openai_compat | openai | codex_cli | pi_cli
 AI_BASE_URL=https://api.deepseek.com/v1
 AI_API_KEY=                            # 留空 = 关闭 AI
 AI_MODEL=deepseek-chat
@@ -65,7 +65,7 @@ AI_DAILY_TOKEN_BUDGET=500000           # 每日 token 预算上限
 
 | 配置项 | 说明 |
 | :--- | :--- |
-| `AI_PROVIDER` | `openai_compat`(OpenAI 兼容,支持 DeepSeek / 通义 / OpenAI 等)或 `ollama`(本地模型) |
+| `AI_PROVIDER` | `openai_compat` / `openai`(远程 OpenAI 兼容接口), `codex_cli`(本机 Codex CLI) 或 `pi_cli`(本机 Pi CLI)。对话助手只接受后两者 |
 | `AI_PROTOCOL` | 请求协议: `chat_completions`(默认, 兼容面最广)或 `responses`(OpenAI 官方新协议, DeepSeek 官方亦已支持); 仅 openai 系 provider 生效, 也可在设置页切换 |
 | `AI_BASE_URL` | 接口地址,如 DeepSeek `https://api.deepseek.com/v1` |
 | `AI_API_KEY` | 留空则关闭 AI 功能 |

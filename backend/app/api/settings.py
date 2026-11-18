@@ -69,6 +69,7 @@ def get_settings() -> dict:
         current_codex_reasoning_effort,
         current_openai_model,
         current_openai_reasoning_effort,
+        current_pi_model,
     )
 
     key = secrets_store.get_tickflow_key()
@@ -99,6 +100,8 @@ def get_settings() -> dict:
         "ai_codex_model": current_codex_model(),
         "ai_codex_command": current_codex_command(),
         "ai_codex_reasoning_effort": current_codex_reasoning_effort(),
+        "ai_pi_model": current_pi_model(),
+        "ai_pi_command": "pi",
         "ai_user_agent": secrets_store.get_ai_config("ai_user_agent", settings.ai_user_agent),
         "ai_max_output_tokens": current_ai_max_output_tokens(),
         "ai_context_window": current_ai_context_window(),
@@ -264,6 +267,7 @@ class AiSettingsIn(BaseModel):
     reasoning_effort: str = Field(default="high", max_length=64)
     codex_command: str = ""
     codex_reasoning_effort: str = ""
+    pi_command: str = ""
     user_agent: str = ""
     max_output_tokens: int | None = None   # 输出上限, 钳制所有任务的 max_tokens
     context_window: int | None = None      # 输入上下文窗口上限 (约 token)
@@ -334,6 +338,7 @@ def save_ai_settings(req: AiSettingsIn) -> dict:
         current_codex_reasoning_effort,
         current_openai_model,
         current_openai_reasoning_effort,
+        current_pi_model,
         normalize_codex_command,
         normalize_codex_model,
         normalize_codex_reasoning_effort,
@@ -354,6 +359,15 @@ def save_ai_settings(req: AiSettingsIn) -> dict:
         updates["ai_codex_reasoning_effort"] = codex_reasoning_effort
         settings.ai_codex_command = codex_command
         settings.ai_codex_reasoning_effort = codex_reasoning_effort
+    elif req.provider == "pi_cli":
+        from app.services.local_ai import PI_DEFAULT_COMMAND
+
+        if req.pi_command.strip() not in {"", PI_DEFAULT_COMMAND}:
+            raise HTTPException(status_code=400, detail="Pi CLI 仅支持使用默认 pi 命令")
+        updates["ai_pi_model"] = req.model.strip()
+        updates["ai_pi_command"] = PI_DEFAULT_COMMAND
+        settings.ai_pi_command = PI_DEFAULT_COMMAND
+        settings.ai_pi_model = req.model.strip()
     else:
         if req.base_url:
             updates["ai_base_url"] = req.base_url
@@ -412,6 +426,8 @@ def save_ai_settings(req: AiSettingsIn) -> dict:
         "ai_codex_model": current_codex_model(),
         "ai_codex_command": current_codex_command(),
         "ai_codex_reasoning_effort": current_codex_reasoning_effort(),
+        "ai_pi_model": current_pi_model(),
+        "ai_pi_command": "pi",
         "ai_configured": ai_configured(provider),
         "ai_max_output_tokens": current_ai_max_output_tokens(),
         "ai_context_window": current_ai_context_window(),
@@ -436,8 +452,10 @@ def clear_ai_settings() -> dict:
         "ai_codex_model",
         "ai_codex_command",
         "ai_codex_reasoning_effort",
+        "ai_pi_command",
+        "ai_pi_model",
     )
-    secrets_store.clear("ai_provider", "ai_protocol", "ai_base_url", "ai_api_key", "ai_model", "ai_codex_command", "ai_codex_reasoning_effort", "ai_max_output_tokens", "ai_context_window")
+    secrets_store.clear("ai_provider", "ai_protocol", "ai_base_url", "ai_api_key", "ai_model", "ai_codex_command", "ai_codex_reasoning_effort", "ai_pi_command", "ai_pi_model", "ai_max_output_tokens", "ai_context_window")
     # 同步重置运行时内存(provider 回默认值,其余置空)
     settings.ai_provider = "openai_compat"
     settings.ai_protocol = "chat_completions"
@@ -446,6 +464,8 @@ def clear_ai_settings() -> dict:
     settings.ai_model = ""
     settings.ai_codex_command = "codex"
     settings.ai_codex_reasoning_effort = ""
+    settings.ai_pi_command = "pi"
+    settings.ai_pi_model = ""
     settings.ai_max_output_tokens = 16384
     settings.ai_context_window = 128000
 

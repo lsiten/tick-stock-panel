@@ -77,9 +77,9 @@ async def _drive_chat(
     fake_execute,
 ) -> list[dict[str, Any]]:
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: False)
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
     script = [{"tool_calls": tool_calls}, {"text_pieces": ["完成"]}]
-    monkeypatch.setattr(chat_service, "stream_openai_round", _script_round(script))
+    monkeypatch.setattr(chat_service, "stream_codex_round", _script_round(script))
     monkeypatch.setattr(assistant_tools, "execute_assistant_tool", fake_execute)
 
     events: list[dict[str, Any]] = []

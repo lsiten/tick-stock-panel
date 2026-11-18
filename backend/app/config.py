@@ -175,6 +175,8 @@ class Settings(BaseSettings):
     ai_model: str = "openai/gpt-6-astra-saver"
     ai_codex_command: str = "codex"
     ai_codex_reasoning_effort: str = ""
+    ai_pi_command: str = "pi"
+    ai_pi_model: str = ""
     # 默认浏览器风格 UA,绕过 Cloudflare 等 CDN/WAF 的 Bot 拦截(Issue #8)。
     # 用户可在 AI 设置页按需修改。
     ai_user_agent: str = (

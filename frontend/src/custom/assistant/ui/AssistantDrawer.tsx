@@ -581,9 +581,9 @@ function EmptyState({ status, suggests }: { status: AssistantStatus | null; sugg
       <div className="rounded-card border border-warning/30 bg-warning/5 p-4 text-sm">
         <div className="flex items-center gap-1.5 font-medium text-warning">
           <Settings2 className="h-4 w-4" />
-          AI 未配置
+          本地 AI CLI 未就绪
         </div>
-        <p className="mt-1.5 text-secondary">AI 助手需要先配置 AI 供应商和 API Key 才能对话。</p>
+        <p className="mt-1.5 text-secondary">AI 助手只使用本机 Codex 或 Pi CLI，请先安装、登录并在设置页测试连接。</p>
         <button
           type="button"
           onClick={() => navigate('/settings?tab=ai')}
@@ -600,10 +600,10 @@ function EmptyState({ status, suggests }: { status: AssistantStatus | null; sugg
       <div className="rounded-card border border-warning/30 bg-warning/5 p-4 text-sm">
         <div className="flex items-center gap-1.5 font-medium text-warning">
           <Settings2 className="h-4 w-4" />
-          当前供应商不支持工具调用
+          当前 AI 接入不可用于助手
         </div>
         <p className="mt-1.5 text-secondary">
-          AI 助手依赖工具调用能力({status.provider} 不支持), 请在设置页切换为 OpenAI 兼容模型。
+          AI 助手只接受本地 CLI（Codex 或 Pi），当前为 {status.provider}。请在设置页切换本机 CLI。
         </p>
         <button
           type="button"

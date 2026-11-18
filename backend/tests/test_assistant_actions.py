@@ -78,12 +78,12 @@ async def _run_chat(
     on_confirm,
 ) -> list[dict[str, Any]]:
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: False)
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
     # 隔离宿主偏好: auto_approve_enabled 直读用户 preferences.json, 本机开了
     # 免确认会让动作跳过确认卡直接执行, 门控断言全军覆没 (CI 偏好默认关碰巧通过)
     monkeypatch.setattr(assistant_actions, "auto_approve_enabled", lambda: False)
     script = [{"tool_calls": tool_calls}, {"text_pieces": ["完成"]}]
-    monkeypatch.setattr(chat_service, "stream_openai_round", _script_round(script))
+    monkeypatch.setattr(chat_service, "stream_codex_round", _script_round(script))
     monkeypatch.setattr(assistant_tools, "execute_assistant_tool", fake_execute)
 
     events: list[dict[str, Any]] = []
@@ -519,14 +519,14 @@ async def _run_rounds_chat(
 ) -> list[dict[str, Any]]:
     """每轮都请求一个查询工具, 第 n_rounds+1 轮产出纯文本收尾。"""
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: False)
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
     monkeypatch.setattr(chat_service, "_round_checkpoint", lambda: checkpoint)
     script = [
         {"tool_calls": [{"id": f"c{i}", "name": "get_indices", "arguments": "{}"}]}
         for i in range(n_rounds)
     ]
     script.append({"text_pieces": ["完成"]})
-    monkeypatch.setattr(chat_service, "stream_openai_round", _script_round(script))
+    monkeypatch.setattr(chat_service, "stream_codex_round", _script_round(script))
 
     async def fake_execute(name: str, args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         return {"ok": True, "result": {"rows": []}}

@@ -82,6 +82,7 @@ def test_extension_registers_routes_via_loader() -> None:
 
 async def test_chat_stream_fails_closed_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(chat_service, "ai_configured", lambda: False)
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
     events = await _collect(await _drain(chat_service.chat_stream(
         history=[{"role": "user", "content": "hi"}],
     )))
@@ -95,6 +96,7 @@ async def test_chat_stream_fails_closed_without_key(monkeypatch: pytest.MonkeyPa
 @pytest.mark.parametrize("configured", [True, False])
 def test_status_allows_tools_for_configured_codex(monkeypatch, configured) -> None:
     monkeypatch.setattr(assistant_routes, "ai_configured", lambda: configured)
+    monkeypatch.setattr(assistant_routes, "is_local_cli_provider", lambda provider=None: True)
     monkeypatch.setattr(assistant_routes, "current_ai_provider", lambda: "codex_cli")
     monkeypatch.setattr(assistant_routes, "current_ai_model", lambda: "local-model")
     app = FastAPI()
@@ -138,8 +140,8 @@ async def test_chat_stream_streams_text_deltas_word_by_word(monkeypatch: pytest.
     """纯文本回答: 逐字 delta 顺序产出, 内容按序拼接。"""
     script = [{"text_pieces": ["你", "好", "共有 ", "2 ", "个策略。"]}]
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: False)
-    monkeypatch.setattr(chat_service, "stream_openai_round", _stream_script(script))
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
+    monkeypatch.setattr(chat_service, "stream_codex_round", _stream_script(script))
 
     events = await _collect(await _drain(chat_service.chat_stream(
         history=[{"role": "user", "content": "我有哪些策略?"}],
@@ -157,8 +159,8 @@ async def test_chat_stream_emits_tool_events_in_order(monkeypatch: pytest.Monkey
         {"text_pieces": ["你共有 ", "2 个策略。"]},
     ]
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: False)
-    monkeypatch.setattr(chat_service, "stream_openai_round", _stream_script(script, captured))
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
+    monkeypatch.setattr(chat_service, "stream_codex_round", _stream_script(script, captured))
 
     events = await _collect(await _drain(chat_service.chat_stream(
         history=[{"role": "user", "content": "我有哪些策略?"}],
@@ -205,8 +207,8 @@ async def test_chat_stream_rounds_checkpoint_prompts_and_stops(monkeypatch: pyte
         for i in range(3)
     ]
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: False)
-    monkeypatch.setattr(chat_service, "stream_openai_round", _stream_script(script))
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
+    monkeypatch.setattr(chat_service, "stream_codex_round", _stream_script(script))
     monkeypatch.setattr(chat_service, "_round_checkpoint", lambda: 2)
     # list_factors 走核心目录且无需引擎; 简化起见用本地工具拦截执行。
     monkeypatch.setattr(
@@ -234,8 +236,8 @@ async def test_chat_stream_truncates_long_history(monkeypatch: pytest.MonkeyPatc
     captured: dict[str, Any] = {}
     script = [{"text_pieces": ["好的"]}]
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: False)
-    monkeypatch.setattr(chat_service, "stream_openai_round", _stream_script(script, captured))
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
+    monkeypatch.setattr(chat_service, "stream_codex_round", _stream_script(script, captured))
 
     history = []
     for i in range(12):
@@ -259,8 +261,8 @@ async def test_chat_stream_surfaces_generate_failure(monkeypatch: pytest.MonkeyP
         yield  # pragma: no cover
 
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: False)
-    monkeypatch.setattr(chat_service, "stream_openai_round", failing_round)
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
+    monkeypatch.setattr(chat_service, "stream_codex_round", failing_round)
 
     events = await _collect(await _drain(chat_service.chat_stream(
         history=[{"role": "user", "content": "hi"}],
@@ -451,6 +453,7 @@ def test_summarize_tool_result_whitelist() -> None:
 
 def test_http_chat_endpoint_streams_ndjson(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(chat_service, "ai_configured", lambda: False)
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
 
     app = FastAPI()
     configure_backend_extensions(app)

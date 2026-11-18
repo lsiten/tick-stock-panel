@@ -25,7 +25,9 @@ from app.config import settings
 OPENAI_COMPAT_PROVIDER = "openai_compat"
 OPENAI_PROVIDER = "openai"
 CODEX_CLI_PROVIDER = "codex_cli"
+PI_CLI_PROVIDER = "pi_cli"
 CODEX_DEFAULT_COMMAND = "codex"
+PI_DEFAULT_COMMAND = "pi"
 CODEX_MIN_TIMEOUT_SECONDS = 600.0
 CODEX_SUPPORTED_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 OPENAI_DEFAULT_REASONING_EFFORT = "high"
@@ -141,10 +143,10 @@ def current_ai_provider() -> str:
 def current_ai_protocol() -> str:
     """当前 OpenAI 系请求协议: chat_completions (默认) | responses。
 
-    仅对 openai/openai_compat 两种 provider 有意义; Codex CLI 走本地子进程,
+    仅对 openai/openai_compat 两种 provider 有意义; Codex/Pi CLI 走本地子进程,
     恒为 chat_completions。非法存储值一律回退默认, 不抛错。
     """
-    if is_codex_cli_provider():
+    if is_local_cli_provider():
         return CHAT_COMPLETIONS_PROTOCOL
     value = str(
         secrets_store.get_ai_config("ai_protocol", settings.ai_protocol) or ""
@@ -170,9 +172,19 @@ def current_codex_model() -> str:
     return normalize_codex_model(str(model or ""))
 
 
+def current_pi_model() -> str:
+    """当前 Pi CLI 模型；兼容旧版共用的 ai_model 字段。"""
+    model = secrets_store.get_ai_config("ai_pi_model", settings.ai_pi_model)
+    if not model and current_ai_provider() == PI_CLI_PROVIDER:
+        model = secrets_store.get_ai_config("ai_model", settings.ai_model)
+    return str(model or "").strip()
+
+
 def current_ai_model() -> str:
     if current_ai_provider() == CODEX_CLI_PROVIDER:
         return current_codex_model()
+    if current_ai_provider() == PI_CLI_PROVIDER:
+        return current_pi_model()
     return current_openai_model()
 
 
@@ -286,10 +298,14 @@ def is_codex_cli_provider(provider: str | None = None) -> bool:
     return (provider or current_ai_provider()) == CODEX_CLI_PROVIDER
 
 
+def is_local_cli_provider(provider: str | None = None) -> bool:
+    return (provider or current_ai_provider()) in {CODEX_CLI_PROVIDER, PI_CLI_PROVIDER}
+
+
 def supports_ai_tools(provider: str | None = None) -> bool:
     """接入适配器是否支持工具协议；具体模型/CLI 的响应仍须运行期校验。"""
     return (provider or current_ai_provider()) in {
-        OPENAI_PROVIDER, OPENAI_COMPAT_PROVIDER, CODEX_CLI_PROVIDER,
+        OPENAI_PROVIDER, OPENAI_COMPAT_PROVIDER, CODEX_CLI_PROVIDER, PI_CLI_PROVIDER,
     }
 
 
@@ -361,10 +377,35 @@ def codex_cli_available() -> bool:
     return proc.returncode == 0
 
 
+def pi_cli_available() -> bool:
+    """Pi CLI 是否可从 PATH 解析；最小请求由 probe 负责真实验证。"""
+    from app.services.local_ai import pi_cli_available as check_pi
+
+    return check_pi()
+
+
+async def _run_pi_cli(
+    messages: Sequence[dict],
+    *,
+    model: str = "",
+    max_tokens: int | None = None,
+    timeout: float = 180.0,
+) -> str:
+    """Pi CLI 私有桥接，保留与 Codex 相同的测试/调用边界。"""
+    from app.services.local_ai import PI_MIN_TIMEOUT_SECONDS, run_pi_cli
+
+    return await run_pi_cli(
+        messages, model=model, max_tokens=max_tokens,
+        timeout=max(timeout, PI_MIN_TIMEOUT_SECONDS),
+    )
+
+
 def ai_configured(provider: str | None = None) -> bool:
     provider = provider or current_ai_provider()
     if is_codex_cli_provider(provider):
         return codex_cli_available()
+    if provider == PI_CLI_PROVIDER:
+        return pi_cli_available()
     return bool(secrets_store.get_ai_key())
 
 
@@ -386,6 +427,11 @@ async def generate_ai_text(
     _check_input_budget(messages, max_tokens=max_tokens)
     if is_codex_cli_provider():
         return await _run_codex_cli(messages, max_tokens=max_tokens, timeout=max(timeout, CODEX_MIN_TIMEOUT_SECONDS))
+    if current_ai_provider() == PI_CLI_PROVIDER:
+        return await _run_pi_cli(
+            messages, model=current_ai_model(), max_tokens=max_tokens,
+            timeout=timeout,
+        )
     if is_responses_protocol():
         from app.services import ai_responses
 
@@ -439,6 +485,13 @@ async def generate_ai_text_with_tools(
 
             message = await ai_codex_tools.run_message_once(
                 req_messages, tool_schemas, max_tokens=max_tokens, timeout=timeout,
+            )
+        elif current_ai_provider() == PI_CLI_PROVIDER:
+            from app.services.local_ai import run_pi_message_once
+
+            message = await run_pi_message_once(
+                req_messages, tool_schemas, model=current_ai_model(),
+                max_tokens=max_tokens, timeout=timeout,
             )
         elif is_responses_protocol():
             from app.services import ai_responses
@@ -547,6 +600,13 @@ async def stream_ai_text(
     _check_input_budget(messages, max_tokens=max_tokens)
     if is_codex_cli_provider():
         yield await _run_codex_cli(messages, max_tokens=max_tokens, timeout=max(timeout, CODEX_MIN_TIMEOUT_SECONDS))
+        return
+
+    if current_ai_provider() == PI_CLI_PROVIDER:
+        yield await _run_pi_cli(
+            messages, model=current_ai_model(), max_tokens=max_tokens,
+            timeout=timeout,
+        )
         return
 
     if is_responses_protocol():
@@ -790,6 +850,13 @@ async def probe_ai_config(
     """
     if provider == CODEX_CLI_PROVIDER:
         return await _probe_codex_cli(model=model)
+    if provider == PI_CLI_PROVIDER:
+        if not pi_cli_available():
+            raise RuntimeError("Pi CLI 不可用: 未找到可运行的 pi 命令, 请先安装 Pi CLI")
+        return await _run_pi_cli(
+            [{"role": "user", "content": "Reply exactly: OK"}],
+            model=model, max_tokens=16, timeout=timeout,
+        )
     if not api_key:
         raise RuntimeError("未配置 API Key")
     if not base_url:

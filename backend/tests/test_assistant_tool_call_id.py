@@ -35,8 +35,8 @@ async def _run(monkeypatch: pytest.MonkeyPatch, tool_calls: list[dict[str, Any]]
     captured: list[list[dict[str, Any]]] = []
     script = [{"tool_calls": tool_calls}, {"text_pieces": ["好的"]}]
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: False)
-    monkeypatch.setattr(chat_service, "stream_openai_round", _script_round(script, captured))
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
+    monkeypatch.setattr(chat_service, "stream_codex_round", _script_round(script, captured))
     monkeypatch.setattr(assistant_tools, "execute_assistant_tool", _fake_execute)
 
     lines = [line async for line in chat_service.chat_stream(

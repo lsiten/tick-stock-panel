@@ -2,8 +2,7 @@
 
 与「群推送 Webhook」(webhook_adapter, 单向 POST) 并存的第二条企业微信通道:
 智能机器人开「API 模式 / 长连接」后, 通过 WebSocket 双向通信, 支持 @机器人
-交互、流式回复、模板卡片。本服务只负责连接保活(连接/鉴权/心跳/重连),
-暂不处理消息收发 — 后续可在此基础上扩展。
+交互。本服务负责连接保活以及把文字消息交给本地 AI 助手并回发 Markdown 回复。
 
 架构(对齐 depth_service):
   - daemon 线程内跑 asyncio 事件循环, 用已安装的 websockets(v16) 库
@@ -256,7 +255,7 @@ class WecomBotService:
                 # 用 wait_for 同时实现"心跳定时"和"接收消息", 哪个先到都行
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=_HEARTBEAT_INTERVAL)
-                    self._log_incoming(raw)
+                    await self._handle_incoming(ws, raw)
                     continue
                 except asyncio.TimeoutError:
                     pass  # 接收超时 → 到了心跳时间
@@ -265,8 +264,8 @@ class WecomBotService:
             except Exception as e:  # noqa: BLE001 — 连接断开, 抛给上层重连
                 raise
 
-    def _log_incoming(self, raw) -> None:
-        """解析并记录收到的消息帧(供测试接收能力)。"""
+    async def _handle_incoming(self, ws, raw) -> None:
+        """解析收到的消息帧并交给本地 AI 助手。"""
         try:
             frame = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
@@ -283,12 +282,33 @@ class WecomBotService:
             content = body.get("text", {}).get("content") or body.get("content", "")
             logger.info("智能机器人收到用户消息 [%s/%s] %s: %s",
                         chattype, msgtype, userid, str(content)[:100])
+            runtime = getattr(self._app_state, "assistant_channel_runtime", None)
+            if runtime is not None and content and body.get("chatid"):
+                asyncio.create_task(runtime.handle_inbound(
+                    "wecom", str(body["chatid"]), str(content),
+                    sender=str(userid),
+                    reply=lambda answer: self._send_message(ws, body, answer),
+                ))
         # 事件回调: 进入会话 / 卡片点击 / 连接被踢等
         elif cmd == "aibot_event_callback":
             eventtype = body.get("event", {}).get("eventtype", "?")
             logger.info("智能机器人收到事件回调: %s", eventtype)
         else:
             logger.info("智能机器人收到帧 cmd=%s: %s", cmd, str(raw)[:200])
+
+    async def _send_message(self, ws, callback: dict, content: str) -> None:
+        """Send a markdown reply through the live WeCom Bot socket."""
+        frame = {
+            "cmd": "aibot_send_msg",
+            "headers": {"req_id": str(uuid.uuid4())},
+            "body": {
+                "chatid": str(callback.get("chatid") or ""),
+                "chat_type": 2 if callback.get("chattype") == "group" else 1,
+                "msgtype": "markdown",
+                "markdown": {"content": str(content or "")[:20480]},
+            },
+        }
+        await ws.send(json.dumps(frame, ensure_ascii=False))
 
     async def _sleep_interruptible(self, seconds: float) -> None:
         """可被 stop() 中断的 sleep(通过检查 _running)。"""

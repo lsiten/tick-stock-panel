@@ -43,9 +43,11 @@ const toIntAllowZero = (v: string) => {
 }
 
 const CODEX_PROVIDER = 'codex_cli'
+const PI_PROVIDER = 'pi_cli'
 const OPENAI_PROVIDER = 'openai'
 const OPENAI_COMPAT_PROVIDER = 'openai_compat'
 const CODEX_COMMAND = 'codex'
+const PI_COMMAND = 'pi'
 const DEFAULT_CODEX_MODEL = 'gpt-5.6-sol'
 const DEFAULT_CODEX_REASONING_EFFORT = 'xhigh'
 const DEFAULT_OPENAI_MODEL = 'gpt-5.5'
@@ -92,6 +94,7 @@ type AiPreset = {
 const presetMeta = (p: AiPreset) => {
   if (p.custom) return '手动配置'
   if (p.provider === CODEX_PROVIDER) return '本机 codex exec'
+  if (p.provider === PI_PROVIDER) return '本机 pi --mode json'
   try {
     return new URL(p.url).hostname
   } catch {
@@ -123,12 +126,15 @@ const PRESETS: AiPreset[] = [
   { label: '智谱 GLM', url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-5.2', website: 'https://open.bigmodel.cn/', websiteLabel: 'open.bigmodel.cn', description: '智谱 AI 官方 OpenAI 兼容接口。', icon: Gem },
   { label: 'Kimi', url: 'https://api.moonshot.cn/v1', model: 'kimi-k2.7-code', website: 'https://platform.moonshot.cn/', websiteLabel: 'platform.moonshot.cn', description: '月之暗面 Moonshot 官方 OpenAI 兼容接口，支持超长上下文。', icon: Moon },
   { label: 'Codex CLI', provider: CODEX_PROVIDER, url: '', model: DEFAULT_CODEX_MODEL, codexCommand: CODEX_COMMAND, website: 'https://developers.openai.com/codex/noninteractive', websiteLabel: 'codex exec', description: '调用本机 Codex CLI 的 codex exec, 适合已登录 ChatGPT/Codex 的本地环境。', icon: Terminal },
+  { label: 'Pi CLI', provider: PI_PROVIDER, url: '', model: '', codexCommand: PI_COMMAND, website: 'https://pi.dev/', websiteLabel: 'pi.dev', description: '调用本机 Pi CLI 的 JSON 运行时。助手只使用本地 CLI，不经由远程 API。', icon: Terminal },
 ]
 
 const findPreset = (provider: string, baseUrl: string, codexCommand: string) => PRESETS.find(p => {
   if (p.custom || (p.provider ?? OPENAI_COMPAT_PROVIDER) !== provider) return false
   if (provider === OPENAI_PROVIDER) return true
-  return provider === CODEX_PROVIDER ? p.codexCommand === codexCommand : p.url === baseUrl
+  return provider === CODEX_PROVIDER || provider === PI_PROVIDER
+    ? p.codexCommand === codexCommand
+    : p.url === baseUrl
 }) ?? PRESETS[0]
 
 export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
@@ -177,9 +183,12 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
   const userEditedRef = useRef(false)
 
   const isCodexProvider = provider === CODEX_PROVIDER
+  const isPiProvider = provider === PI_PROVIDER
+  const isLocalCliProvider = isCodexProvider || isPiProvider
   const isOpenAIProvider = provider === OPENAI_PROVIDER
   const savedCodexProvider = s?.ai_provider === CODEX_PROVIDER
-  const configured = s?.ai_configured ?? (savedCodexProvider ? !!(s?.ai_codex_command ?? CODEX_COMMAND) : s?.has_ai_key)
+  const savedPiProvider = s?.ai_provider === PI_PROVIDER
+  const configured = s?.ai_configured ?? (savedCodexProvider || savedPiProvider ? true : s?.has_ai_key)
   const selectedPreset = PRESETS.find(p => p.label === selectedPresetLabel) ?? PRESETS[0]
   const savedCodexModel = s?.ai_codex_model ?? (savedCodexProvider ? (s?.ai_model ?? '') : '')
   const savedCodexEffort = s?.ai_codex_reasoning_effort ?? ''
@@ -203,10 +212,10 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
     option.model === codexModel && option.effort === codexReasoningEffort,
   ) ?? CODEX_MODEL_OPTIONS[0]
   const codexModelSelectValue = selectedCodexModelOption.value
-  const canSave = isCodexProvider ? true : !!baseUrl.trim() && !!model.trim()
+  const canSave = isLocalCliProvider ? true : !!baseUrl.trim() && !!model.trim()
   // 测试按钮可用性: codex 恒可(探测 CLI 可用性); 其余需要地址+模型, 且
   // Key 草稿或已保存至少其一 (留空回退已保存 Key, 改模型/协议不必重输)
-  const canTest = isCodexProvider || (!!baseUrl.trim() && !!model.trim() && (!!apiKey.trim() || !!configured))
+  const canTest = isLocalCliProvider || (!!baseUrl.trim() && !!model.trim() && (!!apiKey.trim() || !!configured))
 
   // 表单 ← settings 快照的单向同步 (初次加载与「从文件重新加载」共用)
   const syncFormFromSettings = (st: SettingsState) => {
@@ -214,8 +223,8 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
     const unconfigured = !st.has_ai_key && !st.ai_configured
     const savedProvider = st.ai_provider ?? OPENAI_COMPAT_PROVIDER
     const savedBaseUrl = unconfigured ? '' : (st.ai_base_url ?? '')
-    const savedOpenAIModel = unconfigured ? '' : (st.ai_openai_model ?? (savedProvider !== CODEX_PROVIDER ? st.ai_model : '') ?? '')
-    const savedPreset = unconfigured ? PRESETS[0] : findPreset(savedProvider, savedBaseUrl, st.ai_codex_command ?? CODEX_COMMAND)
+    const savedOpenAIModel = unconfigured ? '' : (st.ai_openai_model ?? (savedProvider !== CODEX_PROVIDER && savedProvider !== PI_PROVIDER ? st.ai_model : '') ?? '')
+    const savedPreset = unconfigured ? PRESETS[0] : findPreset(savedProvider, savedBaseUrl, savedProvider === PI_PROVIDER ? (st.ai_pi_command ?? PI_COMMAND) : (st.ai_codex_command ?? CODEX_COMMAND))
     if (!draftsInitialized.current) {
       const officialOpenAI = PRESETS.find(p => p.provider === OPENAI_PROVIDER)
       if (savedProvider === OPENAI_PROVIDER || (savedProvider === CODEX_PROVIDER && savedBaseUrl === officialOpenAI?.url)) {
@@ -227,13 +236,13 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
     }
     setProvider(savedProvider)
     setSelectedPresetLabel(savedPreset.label)
-    setProtocol(savedProvider === CODEX_PROVIDER ? 'chat_completions' : (st.ai_protocol ?? 'chat_completions'))
+    setProtocol(savedProvider === CODEX_PROVIDER || savedProvider === PI_PROVIDER ? 'chat_completions' : (st.ai_protocol ?? 'chat_completions'))
     setBaseUrl(savedBaseUrl)
     setModel(savedOpenAIModel)
     setReasoningEffort(st.ai_reasoning_effort ?? DEFAULT_REASONING_EFFORT)
-    setCodexModel(st.ai_codex_model ?? (savedProvider === CODEX_PROVIDER ? st.ai_model : '') ?? '')
+    setCodexModel(savedProvider === PI_PROVIDER ? (st.ai_pi_model ?? st.ai_model ?? '') : (st.ai_codex_model ?? (savedProvider === CODEX_PROVIDER ? st.ai_model : '') ?? ''))
     setCodexReasoningEffort(st.ai_codex_reasoning_effort ?? '')
-    setCodexCommand(st.ai_codex_command ?? CODEX_COMMAND)
+    setCodexCommand(savedProvider === PI_PROVIDER ? (st.ai_pi_command ?? PI_COMMAND) : (st.ai_codex_command ?? CODEX_COMMAND))
     const ua = st.ai_user_agent ?? ''
     setCustomUa(!!ua)
     setUserAgent(ua)
@@ -279,11 +288,12 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
     provider,
     base_url: baseUrl,
     api_key: apiKey || undefined,
-    model: isCodexProvider ? codexModel : model,
-    ...( !isCodexProvider ? { protocol } : {}),
+    model: isLocalCliProvider ? codexModel : model,
+    ...( !isLocalCliProvider ? { protocol } : {}),
     ...(isOpenAIProvider ? { reasoning_effort: reasoningEffort } : {}),
-    codex_command: isCodexProvider ? CODEX_COMMAND : codexCommand,
+    codex_command: isCodexProvider ? CODEX_COMMAND : '',
     codex_reasoning_effort: isCodexProvider ? codexReasoningEffort : '',
+    pi_command: isPiProvider ? PI_COMMAND : '',
     user_agent: customUa ? userAgent : '',
     max_output_tokens: toPositiveInt(maxOutputTokens),
     context_window: toPositiveInt(contextWindow),
@@ -298,15 +308,17 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
       qc.setQueryData<SettingsState>(QK.settings, prev => prev ? {
         ...prev,
         ai_provider: result.ai_provider ?? provider,
-        ai_protocol: result.ai_protocol ?? (!isCodexProvider ? protocol : 'chat_completions'),
+        ai_protocol: result.ai_protocol ?? (!isLocalCliProvider ? protocol : 'chat_completions'),
         ai_base_url: baseUrl,
-        ai_model: result.ai_model ?? (isCodexProvider ? codexModel : model),
+        ai_model: result.ai_model ?? (isLocalCliProvider ? codexModel : model),
         ai_openai_model: result.ai_openai_model ?? model,
         ai_reasoning_effort: result.ai_reasoning_effort ?? reasoningEffort,
-        ai_codex_model: result.ai_codex_model ?? codexModel,
+        ai_codex_model: result.ai_codex_model ?? (isCodexProvider ? codexModel : prev.ai_codex_model),
         ai_codex_command: result.ai_codex_command ?? (isCodexProvider ? CODEX_COMMAND : codexCommand),
         ai_codex_reasoning_effort: result.ai_codex_reasoning_effort ?? (isCodexProvider ? codexReasoningEffort : ''),
-        ai_configured: result.ai_configured ?? (isCodexProvider ? true : (apiKey ? true : prev.ai_configured)),
+        ai_pi_model: result.ai_pi_model ?? (isPiProvider ? codexModel : prev.ai_pi_model),
+        ai_pi_command: result.ai_pi_command ?? (isPiProvider ? PI_COMMAND : prev.ai_pi_command),
+        ai_configured: result.ai_configured ?? (isLocalCliProvider ? true : (apiKey ? true : prev.ai_configured)),
         ai_max_output_tokens: result.ai_max_output_tokens ?? toPositiveInt(maxOutputTokens),
         ai_context_window: result.ai_context_window ?? toPositiveInt(contextWindow),
         ai_round_checkpoint: result.ai_round_checkpoint ?? toIntAllowZero(roundCheckpoint),
@@ -354,6 +366,8 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
         ai_codex_model: '',
         ai_codex_command: CODEX_COMMAND,
         ai_codex_reasoning_effort: '',
+        ai_pi_model: '',
+        ai_pi_command: PI_COMMAND,
         ai_max_output_tokens: 16384,
         ai_context_window: 128000,
         has_ai_key: false,
@@ -389,6 +403,13 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
       setCodexModel(p.model)
       setCodexReasoningEffort(DEFAULT_CODEX_REASONING_EFFORT)
       setCodexCommand(CODEX_COMMAND)
+      return
+    }
+    if (p.provider === PI_PROVIDER) {
+      setProvider(PI_PROVIDER)
+      setCodexModel(p.model)
+      setCodexReasoningEffort('')
+      setCodexCommand(PI_COMMAND)
       return
     }
     const nextProvider = p.provider ?? OPENAI_COMPAT_PROVIDER
@@ -463,12 +484,12 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
       const r = await api.testAiSettings(
         {
           provider,
-          ...(isCodexProvider ? {} : { base_url: baseUrl.trim(), protocol }),
-          model: (isCodexProvider ? codexModel : model).trim(),
+          ...(isLocalCliProvider ? {} : { base_url: baseUrl.trim(), protocol }),
+          model: (isLocalCliProvider ? codexModel : model).trim(),
           ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
         },
         // codex 探测是真实最小 exec (CLI 启动+一次生成), 默认 30s 会掐断
-        isCodexProvider ? { timeoutMs: 90_000 } : undefined,
+        isLocalCliProvider ? { timeoutMs: 90_000 } : undefined,
       )
       setTestResult({
         ok: r.ok,
@@ -503,11 +524,11 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
               <span className="font-medium text-foreground">{configured ? '已配置' : '未配置'}</span>
               {' · '}
               {configured ? (
-                savedCodexProvider
-                  ? <><span className="font-mono">{s?.ai_codex_command ?? CODEX_COMMAND}</span> · <span className="font-mono">{codexModelLabel(s?.ai_model, s?.ai_codex_reasoning_effort)}</span></>
+                savedCodexProvider || savedPiProvider
+                  ? <><span className="font-mono">{savedPiProvider ? (s?.ai_pi_command ?? PI_COMMAND) : (s?.ai_codex_command ?? CODEX_COMMAND)}</span> · <span className="font-mono">{savedPiProvider ? (s?.ai_pi_model ?? s?.ai_model ?? '默认模型') : codexModelLabel(s?.ai_model, s?.ai_codex_reasoning_effort)}</span></>
                   : <><span className="font-mono">{s?.ai_model}</span><span className="text-muted"> · {s?.ai_api_key_masked}</span></>
               ) : (
-                <span className="text-muted">{isCodexProvider ? '使用本机 codex exec, 无需填写 Key' : '填写下方参数并保存即可启用'}</span>
+                <span className="text-muted">{isLocalCliProvider ? `使用本机 ${isPiProvider ? 'pi --mode json' : 'codex exec'}, 无需填写 Key` : '填写下方参数并保存即可启用'}</span>
               )}
             </span>
           </div>
@@ -585,8 +606,8 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
         <div className="px-5 py-4">
           {/* 标题行: 左侧区段名, 右侧请求方式 (属于本区段内可编辑项, 与下方表单同组) */}
           <div className="mb-3 flex items-center gap-3">
-            <SectionHeader label={isCodexProvider ? '本地 CLI 配置' : '接口配置'} inline />
-            {!isCodexProvider && (
+            <SectionHeader label={isLocalCliProvider ? '本地 CLI 配置' : '接口配置'} inline />
+            {!isLocalCliProvider && (
               <div className="ml-auto flex items-center rounded-full border border-border/40 bg-base/50 p-0.5"
                 title="Chat Completions 兼容面最广; Responses 为 OpenAI 官方新协议, 仅官方及少数网关支持。不确定就保持默认。">
                 {(['chat_completions', 'responses'] as const).map(p => (
@@ -599,40 +620,39 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
                 ))}
               </div>
             )}
-            {isCodexProvider && (
+            {isLocalCliProvider && (
               <span className="ml-auto inline-flex items-center gap-1.5 text-[10px] text-muted" title="Use local Codex CLI via codex exec">
-                <span className="rounded-full border border-border/40 bg-base/50 px-1.5 py-px font-mono">codex exec</span>
+                <span className="rounded-full border border-border/40 bg-base/50 px-1.5 py-px font-mono">{isPiProvider ? 'pi --mode json' : 'codex exec'}</span>
                 CLI
               </span>
             )}
           </div>
           <div className="space-y-4">
-          {isCodexProvider ? (
+          {isLocalCliProvider ? (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="CLI 命令" hint="固定使用默认 codex 命令, 由后端自动解析本机 Codex Desktop/CLI, 不支持自定义可执行路径。">
+              <Field label="CLI 命令" hint={`固定使用默认 ${isPiProvider ? 'pi' : 'codex'} 命令，由后端解析本机 CLI，不支持自定义可执行路径。`}>
                 <div className={`${INPUT_CLS} flex items-center text-muted/80 select-none`} aria-label="Codex CLI command">
-                  {CODEX_COMMAND}
+                  {isPiProvider ? PI_COMMAND : CODEX_COMMAND}
                 </div>
               </Field>
-              <Field
-                label="模型 / 推理档"
-                hint={selectedCodexModelOption.hint}
-              >
-                <select
-                  value={codexModelSelectValue}
-                  onChange={e => {
+              {isPiProvider ? (
+                <Field label="模型" hint="留空时使用 Pi CLI 的本机默认模型。">
+                  <input value={codexModel} onChange={e => setCodexModel(e.target.value)} placeholder="Pi 本机默认" className={INPUT_CLS} />
+                </Field>
+              ) : (
+                <Field label="模型 / 推理档" hint={selectedCodexModelOption.hint}>
+                  <select value={codexModelSelectValue} onChange={e => {
                     const value = e.target.value
                     const option = codexModelOptions.find(item => item.value === value) ?? CODEX_MODEL_OPTIONS[0]
                     setCodexModel(option.model)
                     setCodexReasoningEffort(option.effort)
-                  }}
-                  className={INPUT_CLS}
-                >
-                  {codexModelOptions.map(option => (
-                    <option key={option.value || 'codex-local-default'} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </Field>
+                  }} className={INPUT_CLS}>
+                    {codexModelOptions.map(option => (
+                      <option key={option.value || 'codex-local-default'} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </Field>
+              )}
             </div>
           ) : (
             <>
@@ -778,8 +798,8 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
           <div className="flex min-w-0 items-start gap-2 sm:flex-1">
             <Shield className="mt-px h-3.5 w-3.5 shrink-0 text-muted/70" />
             <p className="text-[11px] leading-relaxed text-muted">
-              {isCodexProvider
-                ? 'Codex CLI 会复用本机已登录账户, 分析上下文将发送给 OpenAI/Codex。'
+              {isLocalCliProvider
+                ? `${isPiProvider ? 'Pi CLI' : 'Codex CLI'} 会复用本机登录账户, AI 助手只通过本地 CLI 运行。`
                 : 'API Key 仅保存在本机项目文件, 不会上传到任何服务器。'}
             </p>
           </div>

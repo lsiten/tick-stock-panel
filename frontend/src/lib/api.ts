@@ -35,6 +35,19 @@ export interface WatchlistPrepareResult {
   message: string
 }
 
+export interface AssistantChannel {
+  platform: string
+  label: string
+  description: string
+  fields: string[]
+  config: Record<string, string>
+  configured: boolean
+  connected: boolean
+  state: string
+  available: boolean
+  agent_names: string[]
+}
+
 /**
  * 把浏览器 fetch 抛出的裸网络错误文案翻译成可操作的提示。
  * 各浏览器文案不同: Chrome "Failed to fetch" / Safari "network error" / "Load failed"。
@@ -2133,6 +2146,8 @@ export interface SettingsState {
   ai_codex_model?: string
   ai_codex_command?: string
   ai_codex_reasoning_effort?: string
+  ai_pi_model?: string
+  ai_pi_command?: string
   ai_user_agent: string
   ai_max_output_tokens?: number
   ai_context_window?: number
@@ -2844,8 +2859,8 @@ export const api = {
     ),
 
   /** 保存 AI 配置 */
-  saveAiSettings: (ai: { provider?: string; base_url?: string; api_key?: string; model?: string; protocol?: string; reasoning_effort?: string; codex_command?: string; codex_reasoning_effort?: string; user_agent?: string; max_output_tokens?: number; context_window?: number; round_checkpoint?: number }) =>
-    request<{ ok: boolean; ai_provider?: string; ai_protocol?: string; ai_model?: string; ai_openai_model?: string; ai_reasoning_effort?: string; ai_codex_model?: string; ai_codex_command?: string; ai_codex_reasoning_effort?: string; ai_configured?: boolean; ai_max_output_tokens?: number; ai_context_window?: number; ai_round_checkpoint?: number }>('/api/settings/ai', {
+  saveAiSettings: (ai: { provider?: string; base_url?: string; api_key?: string; model?: string; protocol?: string; reasoning_effort?: string; codex_command?: string; codex_reasoning_effort?: string; pi_command?: string; user_agent?: string; max_output_tokens?: number; context_window?: number; round_checkpoint?: number }) =>
+    request<{ ok: boolean; ai_provider?: string; ai_protocol?: string; ai_model?: string; ai_openai_model?: string; ai_reasoning_effort?: string; ai_codex_model?: string; ai_codex_command?: string; ai_codex_reasoning_effort?: string; ai_pi_model?: string; ai_pi_command?: string; ai_configured?: boolean; ai_max_output_tokens?: number; ai_context_window?: number; ai_round_checkpoint?: number }>('/api/settings/ai', {
       method: 'POST',
       body: JSON.stringify(ai),
     }),
@@ -3202,6 +3217,20 @@ export const api = {
     request<{ assistant_mask_enabled: boolean }>('/api/settings/preferences/assistant-mask', {
       method: 'PUT',
       body: JSON.stringify({ enabled }),
+    }),
+  assistantChannels: () =>
+    request<{ channels: AssistantChannel[] }>('/api/custom/assistant/channels').then((result) => result.channels),
+  saveAssistantChannel: (platform: string, values: Record<string, string>) =>
+    request<AssistantChannel>(`/api/custom/assistant/channels/${encodeURIComponent(platform)}`, {
+      method: 'PUT', body: JSON.stringify({ values }),
+    }),
+  probeAssistantChannel: (platform: string) =>
+    request<{ ok: boolean; detail: string }>(`/api/custom/assistant/channels/${encodeURIComponent(platform)}/probe`, {
+      method: 'POST',
+    }),
+  disconnectAssistantChannel: (platform: string) =>
+    request<{ ok: boolean }>(`/api/custom/assistant/channels/${encodeURIComponent(platform)}`, {
+      method: 'DELETE',
     }),
   updateFeishuWebhook: (url: string, secret: string = '') =>
     request<{ feishu_webhook_url: string; feishu_webhook_secret: string }>('/api/settings/preferences/feishu-webhook', {

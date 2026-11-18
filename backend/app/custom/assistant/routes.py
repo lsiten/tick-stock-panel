@@ -10,6 +10,8 @@ POST /api/custom/assistant/actions/{call_id}/decision
 """
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -18,6 +20,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.custom.assistant import actions as assistant_actions
+from app.custom.assistant import channels as assistant_channels
+from app.custom.assistant.channel_runtime import AssistantChannelRuntime
 from app.custom.assistant import sessions as assistant_sessions
 from app.custom.assistant import tools as assistant_tools
 from app.custom.assistant.chat_service import chat_stream
@@ -25,6 +29,7 @@ from app.services.ai_provider import (
     ai_configured,
     current_ai_model,
     current_ai_provider,
+    is_local_cli_provider,
 )
 from app.services.ndjson_heartbeat import with_heartbeat
 
@@ -95,7 +100,8 @@ def build_router() -> APIRouter:
 
     @router.get("/status")
     def status() -> dict:
-        configured = ai_configured()
+        local_provider = is_local_cli_provider()
+        configured = local_provider and ai_configured()
         return {
             "configured": configured,
             "provider": current_ai_provider(),
@@ -106,6 +112,87 @@ def build_router() -> APIRouter:
     @router.get("/suggests")
     def suggests() -> dict:
         return {"suggests": assistant_tools.QUICK_SUGGESTS}
+
+    @router.get("/channels")
+    def channels() -> dict:
+        return {"channels": assistant_channels.list_channels()}
+
+    class ChannelPayload(BaseModel):
+        values: dict[str, str] = Field(default_factory=dict)
+
+    @router.put("/channels/{platform}")
+    async def save_channel(platform: str, req: ChannelPayload, request: Request) -> dict:
+        try:
+            row = assistant_channels.save_channel(platform, req.values)
+            runtime = getattr(request.app.state, "assistant_channel_runtime", None)
+            if runtime:
+                await runtime.refresh()
+            return row
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/channels/{platform}/probe")
+    async def probe_channel(platform: str, request: Request) -> dict:
+        try:
+            result = await assistant_channels.probe_channel(platform)
+            if result.get("ok"):
+                runtime = getattr(request.app.state, "assistant_channel_runtime", None)
+                if runtime:
+                    await runtime.refresh()
+            return result
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.delete("/channels/{platform}")
+    def disconnect_channel(platform: str) -> dict:
+        try:
+            assistant_channels.disconnect_channel(platform)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True}
+
+    @router.post("/channels/{platform}/events")
+    async def channel_events(platform: str, request: Request) -> dict:
+        """Public event endpoint for Feishu/Slack/DingTalk callback mode."""
+        payload = await request.json()
+        if platform == "feishu" and payload.get("challenge"):
+            return {"challenge": payload["challenge"]}
+        if platform == "slack" and payload.get("type") == "url_verification":
+            return {"challenge": payload.get("challenge", "")}
+        runtime: AssistantChannelRuntime | None = getattr(request.app.state, "assistant_channel_runtime", None)
+        if runtime is None:
+            raise HTTPException(status_code=503, detail="消息渠道运行时未启动")
+        if platform == "feishu":
+            event = payload.get("event", {})
+            message = event.get("message", {})
+            content = message.get("content", "")
+            try:
+                content = json.loads(content).get("text", content)
+            except (TypeError, json.JSONDecodeError):
+                pass
+            chat_id = str(message.get("chat_id", ""))
+            asyncio.create_task(runtime.handle_inbound(
+                "feishu", chat_id, str(content),
+                reply=lambda answer, cid=chat_id: runtime.feishu_send(cid, answer),
+            ))
+        elif platform == "slack":
+            event = payload.get("event", {})
+            if event.get("type") == "message" and not event.get("bot_id"):
+                values = assistant_channels._required_values("slack")
+                channel = str(event.get("channel", ""))
+                asyncio.create_task(runtime.handle_inbound(
+                    "slack", channel, str(event.get("text", "")),
+                    reply=lambda answer, token=values.get("bot_token", ""), cid=channel, thread=event.get("thread_ts"): runtime._slack_send(token, cid, answer, thread),
+                ))
+        elif platform == "dingtalk":
+            message = payload.get("text") or payload.get("content") or ""
+            conversation = payload.get("conversationId") or payload.get("conversation_id") or ""
+            if message and conversation:
+                asyncio.create_task(runtime.handle_inbound(
+                    "dingtalk", str(conversation), str(message),
+                    reply=lambda answer, cid=str(conversation): runtime.dingtalk_send(cid, answer),
+                ))
+        return {"ok": True}
 
     @router.get("/sessions")
     def sessions(request: Request) -> dict:

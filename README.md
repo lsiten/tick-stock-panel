@@ -218,7 +218,7 @@
 | **数据**     | ![Polars](https://img.shields.io/badge/Polars-CD882D?logo=polars&logoColor=white)（计算）· ![DuckDB](https://img.shields.io/badge/DuckDB-FFF100?logo=duckdb&logoColor=black)（查询）· Parquet（存储）                                                                                                                                                                                                                                                                                                                                                                     |
 | **回测**     | 自研仓位模拟引擎(T+1/费用/滑点/分钟回放)· vectorbt(部分路径)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | **数据源**   | [TickFlow](https://tickflow.org/auth/register?ref=V3KDKGXPEA) 官方 SDK · fuyao(同花顺 REST) · [TdxQuant](https://help.tdx.com.cn/quant/)(通达信量化,实时/五档/日K/复权/分钟) · 插件化扩展(YAML 自定义源)                                                                                                                                                                                                                                                                                                                                                                              |
-| **AI**(可选) | ![OpenAI兼容](https://img.shields.io/badge/OpenAI兼容-412991?logo=openai&logoColor=white) Chat Completions 与 Responses 双协议 · DeepSeek / 通义 / Ollama 等 · 策略生成 / 报告 / **对话助手**(助手依赖工具调用能力, 需 OpenAI 兼容接口)                                                                                                                                                                                                                                                                                                     |
+| **AI**(可选) | ![OpenAI兼容](https://img.shields.io/badge/OpenAI兼容-412991?logo=openai&logoColor=white) OpenAI 兼容接口用于策略/报告；**对话助手仅使用本机 Codex CLI 或 Pi CLI**，通过本地工具轮次读取面板数据                                                                                                                                                                                                                                                                                                     |
 | **MCP**      | [mcp-server](./mcp-server/README.md)(官方 SDK 2.x, stdio) — 12 工具按 scope 暴露,权限裁决复用开放网关                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **前端**     | ![React 18](https://img.shields.io/badge/React_18-61DAFB?logo=react&logoColor=black) ![Vite](https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white) ![Tailwind](https://img.shields.io/badge/Tailwind-06B6D4?logo=tailwindcss&logoColor=white) Tanstack Query · [Lightweight Charts](https://www.tradingview.com/lightweight-charts/)(TradingView 开源) · ![ECharts](https://img.shields.io/badge/ECharts-AA344D?logo=apacheecharts&logoColor=white) · dnd-kit |
 | **部署**     | ![Docker](https://img.shields.io/badge/Docker_单容器-2496ED?logo=docker&logoColor=white) 两阶段构建,前端 dist 拷进后端镜像                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -314,6 +314,10 @@ curl -H "Authorization: Bearer tsp_xxxx" \
 | **侧栏「AI 助手」行** | 左上角状态区 (AI 配置行下方), 一键展开 |
 | **⌘K / Ctrl+K**   | 全局快捷键随时呼出, Esc 关闭         |
 
+### 本地底座
+
+对话助手不会把远程 OpenAI 兼容接口当作助手后端。请在「设置 → AI 服务」选择并登录本机 `codex` 或 `pi` CLI；Codex 使用 `codex exec`，Pi 使用 `pi --mode json`。OpenAI 兼容配置仍可供策略生成、报告等其他 AI 功能使用。
+
 ### 能问什么
 
 21 个查询工具覆盖全站页面能力, 5 个动作工具经确认卡放行 (可开免确认):
@@ -339,7 +343,7 @@ curl -H "Authorization: Bearer tsp_xxxx" \
 
 ### 扩展域的参考实现
 
-后端 `app/custom/assistant/` + 前端 `src/custom/assistant/` 各自独立, 删除目录即整体卸载(见上方[架构](#-架构)); 数据补全工具与数据页共用同一条触发路径, 单飞去重天然一致。未配置 AI Key 或供应商不支持工具调用时 fail-closed, 直接提示前往设置页。
+后端 `app/custom/assistant/` + 前端 `src/custom/assistant/` 各自独立, 删除目录即整体卸载(见上方[架构](#-架构)); 数据补全工具与数据页共用同一条触发路径, 单飞去重天然一致。未安装/未登录本地 CLI，或当前仍选择远程 provider 时 fail-closed, 直接提示前往设置页。
 
 > ⚠️ 助手是数据分析工具, 不提供买卖指令; 涉及交易决策的问题会转换为客观的技术/财务状态、关键价位、风险因素与条件情景。
 
@@ -537,7 +541,7 @@ POLARS_MAX_THREADS=2        # 主要收益项: 用约 40% 的构建耗时换 500
 3. **自选**页加标的 → **策略**页点策略卡片扫描 / 配自定义信号
 4. **回测**页选策略 + 区间 → 看净值 / 夏普 / 交易明细(SSE 实时进度),结果可导出 CSV、存候选一键复测
 5. **监控中心**配规则,盘中实时弹窗 + 持久化记录;**异动监控**覆盖竞价/盘中/偏移全时段
-6. 配好 AI Key 后,**悬浮球 / ⌘K** 呼出 **AI 对话助手**,直接问「今天市场怎么样」「我的自选表现如何」「我的扩展数据表里有什么」,或让它「生成一个放量站上 20 日线的信号」「检查一下数据完整性」——写操作会先弹确认卡, 你点确认才执行
+6. 在「设置 → AI 服务」登录本机 Codex/Pi CLI 后,**悬浮球 / ⌘K** 呼出 **AI 对话助手**,直接问「今天市场怎么样」「我的自选表现如何」「我的扩展数据表里有什么」,或让它「生成一个放量站上 20 日线的信号」「检查一下数据完整性」——写操作会先弹确认卡, 你点确认才执行
 7. 想接自己的程序?**设置 → 开放接口**建个 Token,照着 [examples/open-api](./examples/open-api/README.md) 十分钟跑通第一个脚本;AI 玩家直接配 [MCP](./mcp-server/README.md)
 8. 想定制页面?核心之外 11 个官方页面都是单文件扩展(新装默认隐藏,在**设置 → 菜单设置**开启);自己开发的页面用 [frontend/page-pack-template](./frontend/page-pack-template) 打包,经**设置 → 页面插件**上传即用,宿主无需重建
 
@@ -553,7 +557,7 @@ POLARS_MAX_THREADS=2        # 主要收益项: 用约 40% 的构建耗时换 500
 
 ```ini
 TICKFLOW_API_KEY=              # 留空 = None 模式(历史日K免费);填 Key 解锁更多
-AI_API_KEY=                    # 留空 = 关闭 AI;填 Key 启用策略生成与 AI 对话助手
+AI_API_KEY=                    # 远程策略/报告接口 Key; 对话助手改用本机 Codex/Pi CLI
 PORT=3018                      # 服务端口
 ```
 
@@ -612,6 +616,7 @@ PORT=3018                      # 服务端口
 | :--- | :--- |
 | [开放平台设计](./docs/open-platform-plan.md) | 开放平台设计:核心域/扩展域边界、Token 体系、Tier 契约与分期路线 |
 | [MCP 服务器](./mcp-server/README.md) | MCP 服务器配置(AI 客户端接入)与工具清单 |
+| [AI 消息渠道](./docs/message-channels.md) | 飞书 / Slack / 钉钉 / 企业微信 / Telegram 接入与回调配置 |
 | [开放接口示例](./examples/open-api/README.md) | 开放接口可运行示例(行情/写入/回测/事件流) |
 
 ### 数据源与扩展开发

@@ -146,8 +146,8 @@ async def test_chat_service_sends_thought_signature_back(monkeypatch: pytest.Mon
         return {"ok": True, "result": {}}
 
     monkeypatch.setattr(chat_service, "ai_configured", lambda: True)
-    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: False)
-    monkeypatch.setattr(chat_service, "stream_openai_round", fake_round)
+    monkeypatch.setattr(chat_service, "is_codex_cli_provider", lambda provider=None: True)
+    monkeypatch.setattr(chat_service, "stream_codex_round", fake_round)
     monkeypatch.setattr(assistant_tools, "execute_assistant_tool", fake_execute)
 
     lines = [line async for line in chat_service.chat_stream(
