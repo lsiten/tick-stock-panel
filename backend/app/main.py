@@ -617,6 +617,7 @@ _AUTH_WHITELIST_PREFIX = (
     "/api/custom/assistant/channels/feishu/events",
     "/api/custom/assistant/channels/slack/events",
     "/api/custom/assistant/channels/dingtalk/events",
+    "/api/custom/assistant/channels/feishu/oauth/callback",
 )
 _AUTH_WHITELIST_EXACT = (
     "/health",

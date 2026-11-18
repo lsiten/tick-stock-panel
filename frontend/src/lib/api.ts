@@ -3220,6 +3220,8 @@ export const api = {
     }),
   assistantChannels: () =>
     request<{ channels: AssistantChannel[] }>('/api/custom/assistant/channels').then((result) => result.channels),
+  assistantFeishuQr: () =>
+    request<{ authorize_url: string; redirect_uri: string; expires_in_seconds: number }>('/api/custom/assistant/channels/feishu/qr'),
   saveAssistantChannel: (platform: string, values: Record<string, string>) =>
     request<AssistantChannel>(`/api/custom/assistant/channels/${encodeURIComponent(platform)}`, {
       method: 'PUT', body: JSON.stringify({ values }),

@@ -20,6 +20,7 @@ export function SettingsChannelsPanel() {
   const channels = useQuery({ queryKey: ['assistant-channels'], queryFn: api.assistantChannels })
   const [editing, setEditing] = useState<AssistantChannel | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
+  const [feishuQr, setFeishuQr] = useState<string | null>(null)
   const save = useMutation({
     mutationFn: ({ platform, values }: { platform: string; values: Record<string, string> }) => api.saveAssistantChannel(platform, values),
     onSuccess: async (row) => {
@@ -46,7 +47,7 @@ export function SettingsChannelsPanel() {
       // encrypted value already stored on the server.
       next[field] = row.config[field] && !row.config[field].includes('•') ? row.config[field] : ''
     }
-    setValues(next); setEditing(row)
+    setValues(next); setFeishuQr(null); setEditing(row)
   }
 
   return <div className="max-w-4xl space-y-6">
@@ -81,6 +82,13 @@ export function SettingsChannelsPanel() {
         <div><h3 className="font-medium text-foreground">连接 {editing.label}</h3><p className="mt-1 text-xs text-secondary">凭据只保存在本机，不会回显完整密钥。</p></div>
         <button onClick={() => setEditing(null)} className="rounded p-1 text-muted hover:bg-elevated hover:text-foreground"><X className="h-4 w-4" /></button>
       </div>
+      {editing.platform === 'feishu' && <div className="mt-4 rounded-lg border border-accent/30 bg-accent/5 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div><p className="text-sm font-medium text-foreground">扫码授权</p><p className="mt-1 text-xs text-secondary">按 Multica 的方式使用飞书官方 OAuth 扫码；需要服务端配置 ASSISTANT_FEISHU_APP_ID。</p></div>
+          <button onClick={async () => { try { const result = await api.assistantFeishuQr(); setFeishuQr(result.authorize_url) } catch {} }} className="shrink-0 rounded-lg border border-accent/40 px-3 py-2 text-xs text-accent hover:bg-accent/10">生成二维码</button>
+        </div>
+        {feishuQr && <div className="mt-3 flex flex-col items-center gap-2 rounded-lg bg-white p-3"><img className="h-48 w-48" alt="飞书扫码授权二维码" src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(feishuQr)}`} /><a className="max-w-full break-all text-[10px] text-secondary underline" href={feishuQr} target="_blank" rel="noreferrer">无法扫码时打开授权链接</a></div>}
+      </div>}
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {editing.fields.map(field => <label key={field} className="space-y-1.5 text-xs text-secondary">
           <span>{FIELD_LABELS[field] ?? field}</span>

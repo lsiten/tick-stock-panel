@@ -193,6 +193,10 @@ class Settings(BaseSettings):
     # AI 助手工具轮次检查点: 连续 N 轮工具调用未完成时弹「继续/停止」卡; 0=不检查。
     ai_round_checkpoint: int = 100
 
+    # Optional Feishu OAuth application used by the assistant's QR connect flow.
+    assistant_feishu_app_id: str = ""
+    assistant_feishu_redirect_uri: str = ""
+
     # Server
     host: str = "0.0.0.0"
     port: int = 3018
