@@ -163,6 +163,7 @@ async def chat_stream(
     depth_service: Any = None,
     capabilities: Any = None,
     financial_scheduler: Any = None,
+    auto_approve_actions: set[str] | None = None,
 ) -> AsyncIterator[str]:
     """执行一轮对话, 逐行 yield NDJSON 事件(见模块 __init__ 的协议注释)。"""
     # is_codex_cli_provider is kept in the condition so existing integrations
@@ -234,6 +235,7 @@ async def chat_stream(
             name in assistant_actions.ACTION_TOOLS
             and not assistant_actions.is_read_only_call(name, args)
             and not assistant_actions.auto_approve_enabled()
+            and name not in (auto_approve_actions or set())
         ):
             action = await assistant_actions.registry.register(call_id, name, args)
             meta = assistant_actions.ACTION_META.get(name, {"label": name, "risk": ""})

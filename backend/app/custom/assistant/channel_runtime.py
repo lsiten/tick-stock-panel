@@ -119,6 +119,7 @@ class AssistantChannelRuntime:
                 depth_service=getattr(self.app_state, "depth_service", None),
                 capabilities=getattr(self.app_state, "capabilities", None),
                 financial_scheduler=getattr(self.app_state, "financial_scheduler", None),
+                auto_approve_actions={"create_monitor_rule"},
             ):
                 try:
                     event = json.loads(line)
